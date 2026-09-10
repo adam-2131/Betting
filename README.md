@@ -166,33 +166,53 @@ which inflates both the measured edge and the `1/p` payout on exactly the trades
 backfilling real CLOB curves and rejecting benchmarks older than 24 hours, return per dollar went
 from **+1.7% to −4.3%** on the same signals. The earlier number was mostly the bias.
 
-**The third problem was that the sample was tiny, and two bugs were hiding it.** The sweep came
-back `TOO LITTLE DATA` — no horizon reached 100 signals. The cause was not a shortage of markets
-but two stages disagreeing about which markets mattered:
+**Two further bugs meant the benchmark price was never real in the first place.**
 
 - *The backfill and the backtest selected opposite ends of the year.* Both filtered for resolved
   markets that tracked traders had touched, but the backtest ordered them `resolvedAt asc` and the
   price backfill ordered them `desc`. With ~19,500 markets in the window and a cap of 1,500 each,
   the two slices overlapped by **7 markets**. Every benchmark price fell back to a stale trade
   fill — precisely the failure the backfill existed to prevent. There is now one selector, in
-  `src/lib/backtest/market-selection.ts`, used by both.
+  `src/lib/backtest/market-selection.ts`, that both import.
 - *Thousands of resolution timestamps were fabricated.* `Market.resolvedAt` is derived from
   Gamma's `endDate`, which is the *scheduled* close, not settlement — and markets often resolve
-  early, leaving a resolved market whose end date has not arrived. That case was being handled by
-  clamping the timestamp to `NOW()`, which stamped "whenever a sync happened to run" onto **5,026
+  early, leaving a resolved market whose end date has not arrived. That case was handled by
+  clamping the timestamp to `NOW()`, stamping "whenever a sync happened to run" onto **5,026
   markets** as their resolution time. Since the backtest derives its signal moment as
   `resolvedAt − horizon`, a stamp that late can place the "prediction" after the outcome was
-  already known. Those timestamps are now recovered from observed settlement in
+  already known. Timestamps are now recovered from observed settlement in
   `ClosedPosition.resolvedAt` where possible (2,213 markets) and set to unavailable otherwise.
 
-What survives all that is: no score band beats its own prices by more than chance produces, the
-aggregate edge is not significant, and the rank correlation between score and outcome is
-approximately zero or slightly negative at every horizon tested. The score does not currently
-identify mispriced outcomes, and the interface says so.
+Fixing the first one also settled an argument about sampling. Oldest-first looked like the
+principled choice — a stable slice rather than a moving window — but a backfill over the oldest
+4,500 markets fetched 8,974 tokens and received **8,974 empty responses**. CLOB price history
+only reaches back weeks:
 
-The weights have deliberately not been adjusted to improve this. Tuning parameters until the
-backtest looks good, on the same data the backtest runs on, is how a fitted number gets mistaken
-for an edge.
+| Resolution month | Markets | With price history |
+| --- | --- | --- |
+| 2025-08 … 2026-01 | ~11,000 | 0 |
+| 2026-02 … 2026-07 | ~34,000 | 32 |
+| 2026-08 | 9,896 | 1,106 |
+| 2026-09 | 9,573 | 2,787 |
+
+So the ordering is dictated by where data exists, not by preference. Both stages now take newest
+first.
+
+**The honest current position.** With genuine benchmark prices — 19 of 20 signals now priced from
+the real CLOB curve at a median age of 1 hour, against 0 of 157 before — the sweep returns
+`TOO LITTLE DATA`. Horizons yield between 1 and 28 signals, because usable history spans about six
+weeks and only a fraction of those markets had a tracked wallet holding at the signal moment. The
+aggregate edge over that sample is negative (−17.9pp at one day, p=0.99) and rank correlation is
+inconsistent in sign.
+
+Nothing here demonstrates an edge, and the sample is now too small to demonstrate its absence
+either. That is a weaker claim than the earlier runs made, and a more accurate one. The interface
+says so on the `/backtest` screen rather than rounding it up to a result.
+
+The weights have deliberately not been adjusted to improve any of this. Tuning parameters until
+the backtest looks good, on the same data the backtest runs on, is how a fitted number gets
+mistaken for an edge.
+
 
 ## Two data caveats worth knowing about
 

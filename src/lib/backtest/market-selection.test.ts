@@ -48,7 +48,10 @@ describe("the backfill covers what the backtest tests", () => {
     // The bug this guards: the backfill ordered `desc` while the backtest ordered `asc`, so with
     // ~19,500 markets in the window and a cap of 1,500 each, the two slices came from opposite
     // ends of a year and overlapped by 7 markets.
-    expect(TESTABLE_MARKET_ORDER).toEqual({ resolvedAt: "asc" });
+    //
+    // `desc` specifically, because CLOB price history only reaches back weeks — an oldest-first
+    // backfill of 8,974 tokens returned 8,974 empty responses.
+    expect(TESTABLE_MARKET_ORDER).toEqual({ resolvedAt: "desc" });
   });
 
   it("takes strictly more markets than the backtest, so its slice is a superset", () => {
@@ -77,10 +80,10 @@ describe("the backfill covers what the backtest tests", () => {
     expect(actualFrom).toBeLessThanOrEqual(after - DEFAULT_TESTABLE_LOOKBACK_DAYS * 86_400_000 + 1000);
   });
 
-  it("keeps the backfill window no earlier than the backtest's", () => {
-    // Under ascending order a backfill reaching further back would spend its budget on markets
-    // older than anything tested — the same disjoint-set failure, quieter.
+  it("shares the backtest's window, so neither stage reaches past the other", () => {
+    // Under descending order both walk back from now; a shared window plus the larger backfill
+    // cap is what makes one slice contain the other.
     const backtestLookback = 365;
-    expect(DEFAULT_TESTABLE_LOOKBACK_DAYS).toBeLessThanOrEqual(backtestLookback);
+    expect(DEFAULT_TESTABLE_LOOKBACK_DAYS).toBe(backtestLookback);
   });
 });
