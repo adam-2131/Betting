@@ -1,0 +1,749 @@
+// PolyAlpha — internal data model.
+//
+// Nothing here mirrors a Polymarket API response 1:1 on purpose. External shapes live in
+// src/lib/polymarket/types.ts and are converted by src/lib/polymarket/normalize.ts. That keeps a
+// Polymarket field rename from rippling into the database.
+//
+// Money is stored as Float (USDC, dollars). Prices are 0..1 probabilities. Nullable means
+// "genuinely unknown" and renders as "Unavailable" — it is never coerced to 0.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Category {
+  POLITICS
+  ECONOMICS
+  SPORTS
+  CRYPTO
+  ENTERTAINMENT
+  GEOPOLITICS
+  OTHER
+  UNKNOWN
+}
+
+/// Behaviour classification is a heuristic, never presented as certain.
+enum BehaviorClass {
+  DISCRETIONARY
+  POSSIBLE_BOT
+  SCALPER
+  MARKET_MAKER
+  UNKNOWN
+}
+
+enum TraderSource {
+  MANUAL
+  LEADERBOARD
+  HOLDERS
+  SEED
+}
+
+enum ActivityType {
+  TRADE
+  SPLIT
+  MERGE
+  REDEEM
+  REWARD
+  CONVERSION
+  OTHER
+}
+
+enum TradeSide {
+  BUY
+  SELL
+}
+
+enum SignalType {
+  STRONG_CONSENSUS
+  RECENT_ACCUMULATION
+  CATEGORY_EXPERTS
+  ENTRY_ATTRACTIVE
+  CHASING
+  ONE_WALLET_SIGNAL
+  LOW_LIQUIDITY
+  WIDE_SPREAD
+  POSSIBLE_BOT_ACTIVITY
+  STALE_POSITIONS
+  RESOLVING_SOON
+  AMBIGUOUS_RESOLUTION
+}
+
+enum SignalTone {
+  POSITIVE
+  WARNING
+}
+
+enum FeedEventType {
+  POSITION_OPENED
+  POSITION_INCREASED
+  POSITION_REDUCED
+  POSITION_CLOSED
+  CLUSTER_ENTRY
+  CONSENSUS_SHIFT
+  PRICE_CROSSED_ELITE_ENTRY
+  MARKET_RESOLVED
+}
+
+// ---------------------------------------------------------------------------
+// Traders
+// ---------------------------------------------------------------------------
+
+model Trader {
+  id          String       @id @default(cuid())
+  /// Polymarket proxy wallet, lowercased. This is the address the Data API keys off.
+  wallet      String       @unique
+  displayName String
+  profileName String?
+  profileUrl  String?
+  avatarUrl   String?
+  specialty   Category     @default(UNKNOWN)
+  notes       String?      @db.Text
+  active      Boolean      @default(true)
+  source      TraderSource @default(MANUAL)
+
+  /// Highest `timestamp` already ingested from /activity, so syncs are incremental.
+  lastActivityTs Int?
+  lastSyncedAt   DateTime?
+  syncError      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  snapshots            TraderSnapshot[]
+  performance          TraderPerformance?
+  categoryPerformance  TraderCategoryPerformance[]
+  positions            Position[]
+  closedPositions      ClosedPosition[]
+  activity             TradeActivity[]
+  feedEvents           FeedEvent[]
+
+  @@index([active])
+  @@index([specialty])
+}
+
+/// Point-in-time portfolio state. This is how we build a value history the API does not expose.
+model TraderSnapshot {
+  id                 String   @id @default(cuid())
+  traderId           String
+  capturedAt         DateTime @default(now())
+  portfolioValue     Float?
+  openPositionCount  Int
+  unrealizedPnl      Float?
+  realizedPnlToDate  Float?
+  tradedMarketCount  Int?
+
+  trader Trader @relation(fields: [traderId], references: [id], onDelete: Cascade)
+
+  @@index([traderId, capturedAt])
+}
+
+/// Latest computed rollup for a trader. One row per trader, recomputed by the scores sync stage.
+model TraderPerformance {
+  id         String   @id @default(cuid())
+  traderId   String   @unique
+  computedAt DateTime @default(now())
+
+  // --- PnL. Realized and unrealized are deliberately never summed into one headline number
+  //     without also exposing both parts.
+  realizedPnl    Float?
+  unrealizedPnl  Float?
+  totalPnl       Float?
+  portfolioValue Float?
+
+  // --- Track record over resolved positions only
+  closedCount    Int    @default(0)
+  winCount       Int    @default(0)
+  lossCount      Int    @default(0)
+  winRate        Float?
+  totalStaked    Float?
+  roi            Float?
+  avgEntryPrice  Float?
+  avgPositionUsd Float?
+  largestPositionUsd Float?
+  largestWinUsd      Float?
+  largestLossUsd     Float?
+
+  /// True when the closed-position history looks like it only contains redeemed winners.
+  /// Polymarket's /closed-positions is redemption-driven, so a trader who never redeems
+  /// worthless losing tokens shows an artificially perfect record. Surfaced, not hidden.
+  redemptionBiasSuspected Boolean @default(false)
+  /// True when the stored history hit the per-sync page cap, so figures cover a recent subset.
+  historyTruncated        Boolean @default(false)
+
+  // --- Smart Trader Score (0-100) with every input kept for display
+  smartScore Float?
+  /// { longTerm, consistency, recentForm, categorySkill, riskAdjusted, sampleQuality, conviction }
+  components Json?
+  /// [{ key, label, points, detail }] — always negative points
+  penalties  Json?
+
+  // --- Behaviour classification (heuristic)
+  behaviorClass      BehaviorClass @default(UNKNOWN)
+  behaviorConfidence Float?
+  /// [{ label, detail }]
+  behaviorReasons    Json?
+
+  // --- Behaviour + risk inputs, surfaced in the UI so the score is auditable
+  tradeCount            Int?
+  tradesLast7d          Int?
+  tradesLast30d         Int?
+  medianHoldSeconds     Float?
+  heldToResolutionPct   Float?
+  bothSidesMarketCount  Int?
+  turnoverRatio         Float?
+  concentrationHhi      Float?
+  topWinShare           Float?
+  roiLast30d            Float?
+  roiLast90d            Float?
+  monthlyWinRate        Float?
+  profitVolatility      Float?
+  riskAdjustedReturn    Float?
+
+  /// Monthly buckets: [{ month: "2026-03", realizedPnl, wins, losses, staked }]
+  monthlyPnl Json?
+  /// Entry buckets: [{ bucket: "0-10", count, wins, staked, realizedPnl, roi }]
+  entryBuckets Json?
+  /// Cumulative curve: [{ t: iso, cumulativePnl }]
+  pnlCurve Json?
+
+  trader Trader @relation(fields: [traderId], references: [id], onDelete: Cascade)
+
+  @@index([smartScore])
+}
+
+/// Per-category track record. Drives the "category skill" component and the CATEGORY_EXPERTS badge.
+/// (Named per-category rather than per-market: a per-market track record has a sample size of ~1
+///  and is not useful for scoring. Documented in DATA_MODEL.md.)
+model TraderCategoryPerformance {
+  id         String   @id @default(cuid())
+  traderId   String
+  category   Category
+  computedAt DateTime @default(now())
+
+  closedCount Int    @default(0)
+  winCount    Int    @default(0)
+  winRate     Float?
+  realizedPnl Float?
+  totalStaked Float?
+  roi         Float?
+  /// 0-100, shrunk toward 50 when the sample is small
+  skillScore  Float?
+
+  trader Trader @relation(fields: [traderId], references: [id], onDelete: Cascade)
+
+  @@unique([traderId, category])
+  @@index([category, skillScore])
+}
+
+// ---------------------------------------------------------------------------
+// Markets
+// ---------------------------------------------------------------------------
+
+model Market {
+  id            String @id @default(cuid())
+  /// CTF condition id — the stable cross-API key.
+  conditionId   String @unique
+  gammaMarketId String?
+
+  question   String   @db.Text
+  slug       String?
+  eventId    String?
+  eventSlug  String?
+  eventTitle String?  @db.Text
+
+  description      String? @db.Text
+  resolutionSource String? @db.Text
+  category         Category @default(UNKNOWN)
+  tags             String[]
+
+  /// Parsed from the JSON-encoded `outcomes` string, e.g. ["Yes","No"].
+  outcomes     String[]
+  /// Parsed from the JSON-encoded `clobTokenIds` string, index-aligned with `outcomes`.
+  clobTokenIds String[]
+
+  // --- Live pricing. `prices` is index-aligned with `outcomes`.
+  prices        Float[]
+  bestBid       Float?
+  bestAsk       Float?
+  spread        Float?
+  lastTradePrice Float?
+  midpoint      Float?
+
+  liquidity     Float?
+  volume        Float?
+  volume24hr    Float?
+  volume1wk     Float?
+  openInterest  Float?
+
+  startDate DateTime?
+  endDate   DateTime?
+
+  active          Boolean @default(true)
+  closed          Boolean @default(false)
+  archived        Boolean @default(false)
+  acceptingOrders Boolean @default(true)
+  enableOrderBook Boolean @default(true)
+  negRisk         Boolean @default(false)
+
+  resolved             Boolean   @default(false)
+  resolvedOutcomeIndex Int?
+  resolvedAt           DateTime?
+
+  /// 0-100 heuristic from a text scan of the resolution criteria. Never presented as authoritative.
+  clarityScore Float?
+  clarityFlags String[]
+
+  lastSyncedAt DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  snapshots       MarketSnapshot[]
+  priceSeries     MarketPriceSeries[]
+  positions       Position[]
+  closedPositions ClosedPosition[]
+  activity        TradeActivity[]
+  consensus       MarketConsensus[]
+  opportunities   Opportunity[]
+  feedEvents      FeedEvent[]
+  backtestSignals BacktestSignal[]
+
+  @@index([closed, active])
+  @@index([category])
+  @@index([endDate])
+  @@index([liquidity])
+  @@index([eventId])
+}
+
+/// Written only when something moved materially (see sync/dedupe thresholds) so the table does not
+/// fill with identical rows. This is also the point-in-time price oracle for the backtest.
+model MarketSnapshot {
+  id         String   @id @default(cuid())
+  marketId   String
+  capturedAt DateTime @default(now())
+
+  prices     Float[]
+  bestBid    Float?
+  bestAsk    Float?
+  spread     Float?
+  liquidity  Float?
+  volume24hr Float?
+
+  market Market @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  @@index([marketId, capturedAt])
+  @@index([capturedAt])
+}
+
+/// Historical price series backfilled from CLOB `/prices-history`, one row per outcome token.
+///
+/// Deliberately separate from `MarketSnapshot`. A snapshot is something this installation actually
+/// observed while running; these are fetched retrospectively for periods we were not watching.
+/// Mixing them would make the snapshot table's provenance unreadable.
+///
+/// The whole series lives in one `points` blob rather than a row per sample. Sampled at
+/// fidelity=60 a typical market yields 40–700 points, so the series are small, and the backtest
+/// always wants the entire curve for a market rather than individual samples.
+model MarketPriceSeries {
+  id       String @id @default(cuid())
+  marketId String
+  /// CLOB token id. NAMING TRAP: /prices-history calls this parameter `market`.
+  tokenId  String @unique
+
+  outcomeIndex Int
+  /// Sample resolution in minutes, as requested from the API.
+  fidelity     Int
+
+  /// `[{ t: unixSeconds, p: price }]`, ascending by t.
+  points     Json
+  pointCount Int
+
+  firstAt   DateTime?
+  lastAt    DateTime?
+  fetchedAt DateTime  @default(now())
+
+  market Market @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  @@index([marketId])
+}
+
+// ---------------------------------------------------------------------------
+// Positions
+// ---------------------------------------------------------------------------
+
+/// A tracked trader's currently-open position in one outcome token.
+model Position {
+  id       String @id @default(cuid())
+  traderId String
+  marketId String
+
+  /// CLOB token id (the Data API calls this `asset`).
+  asset        String
+  conditionId  String
+  outcome      String
+  outcomeIndex Int
+
+  /// Shares held.
+  size          Float
+  avgPrice      Float?
+  /// USD cost basis == size × avgPrice (verified against live data).
+  initialValue  Float?
+  currentValue  Float?
+  cashPnl       Float?
+  percentPnl    Float?
+  /// SHARES bought, not dollars. See DATA_MODEL.md — the API field name is misleading.
+  sharesBought  Float?
+  realizedPnl   Float?
+  curPrice      Float?
+  redeemable    Boolean @default(false)
+  mergeable     Boolean @default(false)
+  negativeRisk  Boolean @default(false)
+
+  /// Earliest BUY in /activity for this asset. Null until activity has been ingested.
+  openedAt    DateTime?
+  firstSeenAt DateTime  @default(now())
+  lastSeenAt  DateTime  @default(now())
+  isOpen      Boolean   @default(true)
+
+  snapshots PositionSnapshot[]
+
+  trader Trader @relation(fields: [traderId], references: [id], onDelete: Cascade)
+  market Market @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  @@unique([traderId, asset])
+  @@index([marketId, isOpen])
+  @@index([traderId, isOpen])
+  @@index([conditionId])
+}
+
+model PositionSnapshot {
+  id         String   @id @default(cuid())
+  positionId String
+  capturedAt DateTime @default(now())
+
+  size         Float
+  avgPrice     Float?
+  currentValue Float?
+  cashPnl      Float?
+  curPrice     Float?
+
+  position Position @relation(fields: [positionId], references: [id], onDelete: Cascade)
+
+  @@index([positionId, capturedAt])
+}
+
+/// A settled position — the trader's actual track record. `curPrice` from the API is the settlement
+/// value (1 = won, 0 = lost).
+model ClosedPosition {
+  id       String  @id @default(cuid())
+  traderId String
+  marketId String?
+
+  asset        String
+  conditionId  String
+  title        String  @db.Text
+  slug         String?
+  eventSlug    String?
+  outcome      String
+  outcomeIndex Int
+  category     Category @default(UNKNOWN)
+
+  avgPrice    Float?
+  /// SHARES bought, not dollars — the upstream field name (`totalBought`) is misleading.
+  /// Verified: for a winner, realizedPnl == sharesBought − sharesBought × avgPrice.
+  sharesBought Float?
+  /// USD actually staked == sharesBought × avgPrice. This is the ROI denominator.
+  costBasisUsd Float?
+  realizedPnl Float?
+  /// Settlement price: 1 won, 0 lost. Anything else means "not cleanly settled".
+  curPrice    Float?
+  won         Boolean?
+
+  endDate    DateTime?
+  resolvedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  trader Trader  @relation(fields: [traderId], references: [id], onDelete: Cascade)
+  market Market? @relation(fields: [marketId], references: [id], onDelete: SetNull)
+
+  @@unique([traderId, asset])
+  @@index([traderId, resolvedAt])
+  @@index([category])
+  @@index([conditionId])
+}
+
+// ---------------------------------------------------------------------------
+// Activity
+// ---------------------------------------------------------------------------
+
+/// Raw on-chain action log per tracked trader. Kept close to the API shape because it is the
+/// evidence base for holding periods, entry timing and the "recent accumulation" signal.
+model TradeActivity {
+  id       String  @id @default(cuid())
+  traderId String
+  marketId String?
+
+  /// Stable dedupe key: txHash:asset:side:timestamp:size. /activity can return the same fill twice
+  /// across overlapping pages, and one tx can contain several fills.
+  dedupeKey String @unique
+
+  transactionHash String?
+  timestamp       Int
+  occurredAt      DateTime
+
+  conditionId  String
+  type         ActivityType
+  side         TradeSide?
+  size         Float?
+  usdcSize     Float?
+  price        Float?
+  asset        String?
+  outcome      String?
+  outcomeIndex Int?
+  title        String?  @db.Text
+  slug         String?
+  eventSlug    String?
+
+  trader Trader  @relation(fields: [traderId], references: [id], onDelete: Cascade)
+  market Market? @relation(fields: [marketId], references: [id], onDelete: SetNull)
+
+  @@index([traderId, timestamp])
+  @@index([conditionId, timestamp])
+  @@index([marketId, timestamp])
+  @@index([occurredAt])
+}
+
+// ---------------------------------------------------------------------------
+// Signals / scoring output
+// ---------------------------------------------------------------------------
+
+/// Aggregated tracked-trader state for one side of one market.
+model MarketConsensus {
+  id           String   @id @default(cuid())
+  marketId     String
+  outcomeIndex Int
+  computedAt   DateTime @default(now())
+
+  score      Float
+  /// { agreement, traderQuality, categorySkill, recency, convictionRelative, entryAlignment }
+  components Json
+  /// [{ key, label, points, detail }]
+  penalties  Json
+
+  traderCount          Int   @default(0)
+  qualifiedTraderCount Int   @default(0)
+  opposingTraderCount  Int   @default(0)
+  exposureUsd          Float @default(0)
+  opposingExposureUsd  Float @default(0)
+
+  weightedEntryPrice Float?
+  avgEntryPrice      Float?
+  currentPrice       Float?
+  entryGap           Float?
+
+  boughtUsd24h    Float @default(0)
+  soldUsd24h      Float @default(0)
+  increasingCount Int   @default(0)
+  decreasingCount Int   @default(0)
+
+  /// Share of the weighted signal contributed by the single largest wallet (0..1).
+  topWalletShare  Float?
+  medianPositionAgeHours Float?
+
+  /// [{ traderId, wallet, displayName, smartScore, sizeUsd, avgPrice, weight, openedAt }]
+  contributors Json?
+
+  market Market @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  @@unique([marketId, outcomeIndex])
+  @@index([score])
+}
+
+/// A ranked, scored opportunity. One row per (market, side) that survived the filters.
+model Opportunity {
+  id           String   @id @default(cuid())
+  marketId     String
+  outcomeIndex Int
+  computedAt   DateTime @default(now())
+
+  score      Float
+  rank       Int?
+  /// { consensus, traderQuality, entryQuality, liquidity, execution, recency, clarity }
+  components Json
+  /// [{ key, label, points, detail }]
+  penalties  Json
+
+  currentPrice       Float
+  weightedEliteEntry Float?
+  entryGap           Float?
+  consensusScore     Float?
+  qualifiedTraders   Int    @default(0)
+  opposingTraders    Int    @default(0)
+
+  // MODEL ESTIMATE — a quantitative range, never a claim of true probability.
+  modelEstimateLow  Float?
+  modelEstimateMid  Float?
+  modelEstimateHigh Float?
+  edgePoints        Float?
+  evPerShare        Float?
+
+  liquidity Float?
+  spread    Float?
+  riskLevel String?
+
+  /// [{ text }] rendered under "Why it is interesting"
+  reasonsFor     Json?
+  /// [{ text }] rendered under "Why it could fail"
+  reasonsAgainst Json?
+
+  signals Signal[]
+  market  Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  @@unique([marketId, outcomeIndex])
+  @@index([score])
+  @@index([rank])
+}
+
+model Signal {
+  id            String     @id @default(cuid())
+  opportunityId String
+  type          SignalType
+  tone          SignalTone
+  label         String
+  detail        String     @db.Text
+  createdAt     DateTime   @default(now())
+
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  @@index([opportunityId])
+  @@index([type])
+}
+
+/// The activity feed. Aggregated events, not a raw transaction dump.
+model FeedEvent {
+  id         String        @id @default(cuid())
+  type       FeedEventType
+  occurredAt DateTime
+  /// Prevents re-emitting the same event on every sync.
+  dedupeKey  String        @unique
+
+  traderId     String?
+  marketId     String?
+  outcomeIndex Int?
+
+  headline    String  @db.Text
+  detail      String? @db.Text
+  magnitudeUsd Float?
+  importance   Int     @default(0)
+  meta         Json?
+
+  createdAt DateTime @default(now())
+
+  trader Trader? @relation(fields: [traderId], references: [id], onDelete: Cascade)
+  market Market? @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  @@index([occurredAt])
+  @@index([type, occurredAt])
+  @@index([marketId])
+}
+
+// ---------------------------------------------------------------------------
+// Backtest
+// ---------------------------------------------------------------------------
+
+model BacktestRun {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  label     String?
+
+  /// Window and filters used, so a run is reproducible.
+  params Json
+  /// Snapshot of the scoring config at run time — weights change, old runs should not silently shift.
+  config Json
+  /// Aggregate results incl. per-score-bucket breakdown.
+  results Json
+
+  signalCount Int    @default(0)
+  winRate     Float?
+  roi         Float?
+  maxDrawdown Float?
+
+  signals BacktestSignal[]
+
+  @@index([createdAt])
+}
+
+/// One hypothetical historical signal. Scored with point-in-time inputs only.
+model BacktestSignal {
+  id       String @id @default(cuid())
+  runId    String
+  marketId String
+
+  outcomeIndex Int
+  signalAt     DateTime
+  priceAtSignal Float
+
+  opportunityScore Float
+  consensusScore   Float?
+  qualifiedTraders Int    @default(0)
+  weightedEntry    Float?
+  entryGap         Float?
+
+  resolvedOutcomeIndex Int?
+  resolvedAt           DateTime?
+  won                  Boolean?
+  /// Profit/loss on a hypothetical $1 stake. +((1/p)-1) if won, -1 if lost.
+  pnlPerDollar         Float?
+
+  run    BacktestRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  market Market      @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  @@index([runId, opportunityScore])
+  @@index([runId, signalAt])
+}
+
+// ---------------------------------------------------------------------------
+// App state
+// ---------------------------------------------------------------------------
+
+/// Single-row settings table (id is always "default").
+model AppSettings {
+  id String @id @default("default")
+
+  bankroll          Float   @default(7)
+  smallBankrollMode Boolean @default(true)
+  excludeBots       Boolean @default(true)
+
+  minTraderScore    Float @default(50)
+  minConsensusScore Float @default(40)
+  minLiquidity      Float @default(1000)
+  maxSpread         Float @default(0.05)
+  minAgreeingTraders Int  @default(2)
+  maxEntryGap       Float @default(0.15)
+
+  /// Partial override of src/lib/scoring/config.ts. Null = use file defaults.
+  scoringOverrides Json?
+
+  updatedAt DateTime @updatedAt
+}
+
+model SyncRun {
+  id         String    @id @default(cuid())
+  stage      String
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  ok         Boolean   @default(false)
+  error      String?   @db.Text
+  stats      Json?
+
+  @@index([stage, startedAt])
+}

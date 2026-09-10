@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+next-env.d.ts
+
+# Local database (real PostgreSQL data directory created by `npm run db:local`)
+.pgdata/
+# Data directory used by the earlier PGlite-based setup
+.pglite/
+
+# Environment. .env.example is committed; .env is not.
+.env
+.env.local
+.env*.local
+
+# API research scratchpad: live response captures and one-off probe scripts
+.research/
+
+# Build and tooling output
+dist/
+build/
+*.tsbuildinfo
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

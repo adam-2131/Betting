@@ -1,0 +1,95 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Terminal palette. Values are RGB channel triples, not hex, so Tailwind's opacity
+ * modifiers (bg-surface/60, border-accent/20) resolve against them.
+ */
+:root {
+  color-scheme: dark;
+
+  --pa-bg: 10 12 16; /* #0a0c10 */
+  --pa-surface: 18 21 28; /* #12151c */
+  --pa-elevated: 23 27 36; /* #171b24 */
+  --pa-line: 31 36 46; /* #1f242e */
+  --pa-fg: 230 233 239; /* #e6e9ef */
+  --pa-muted: 139 147 167; /* #8b93a7 */
+  --pa-dim: 90 98 117; /* #5a6275 */
+  --pa-accent: 56 189 248; /* #38bdf8 */
+  --pa-positive: 52 211 153; /* #34d399 */
+  --pa-negative: 248 113 113; /* #f87171 */
+  --pa-warning: 251 191 36; /* #fbbf24 */
+}
+
+@layer base {
+  html {
+    background-color: rgb(var(--pa-bg));
+    -webkit-text-size-adjust: 100%;
+    scrollbar-color: rgb(var(--pa-line)) transparent;
+    scrollbar-width: thin;
+  }
+
+  body {
+    background-color: rgb(var(--pa-bg));
+    color: rgb(var(--pa-fg));
+  }
+
+  /* Numbers must never shift width between rows in a dense table. */
+  th,
+  td,
+  input,
+  output,
+  time {
+    font-variant-numeric: tabular-nums;
+  }
+
+  ::selection {
+    background-color: rgb(var(--pa-accent) / 0.25);
+    color: rgb(var(--pa-fg));
+  }
+
+  :focus-visible {
+    outline: 1px solid rgb(var(--pa-accent) / 0.7);
+    outline-offset: 1px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background-color: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: rgb(var(--pa-line));
+    border: 2px solid transparent;
+    background-clip: content-box;
+    border-radius: 9999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(var(--pa-dim));
+  }
+
+  ::-webkit-scrollbar-corner {
+    background-color: transparent;
+  }
+}
+
+@layer utilities {
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .no-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
