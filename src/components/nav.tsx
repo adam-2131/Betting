@@ -9,6 +9,7 @@ const LINKS = [
   { href: "/cash-soon", label: "CASH SOON" },
   { href: "/sports", label: "SPORTS" },
   { href: "/bets", label: "MY BETS" },
+  { href: "/alerts", label: "ALERTS" },
   { href: "/plan", label: "PLAN" },
   { href: "/smart-money", label: "SMART MONEY" },
   { href: "/traders", label: "TRADERS" },

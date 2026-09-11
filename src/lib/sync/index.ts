@@ -11,6 +11,7 @@
 import { prisma } from "@/lib/db";
 import { syncBets } from "./bets";
 import { pruneFeed } from "./feed";
+import { syncNotifications } from "./notify";
 import { refreshStaleTrackedMarkets, syncMarkets } from "./markets";
 import { syncOpportunities } from "./opportunities";
 import { discoverFromHolders, discoverFromTape } from "./discover";
@@ -27,7 +28,8 @@ export type SyncStage =
   | "prices"
   | "scores"
   | "opportunities"
-  | "bets";
+  | "bets"
+  | "notify";
 
 /**
  * `relink` sits after `traders` because it repairs rows the trader stage has just written, using
@@ -46,6 +48,8 @@ export const ALL_STAGES: SyncStage[] = [
   // Last, and cheap: it only touches bets whose close has already passed. Included by default
   // because a feedback loop nobody remembers to run is not a feedback loop.
   "bets",
+  // Runs last of all so it can see everything the pass just produced.
+  "notify",
 ];
 
 /**
@@ -64,6 +68,7 @@ export const EVERY_STAGE: SyncStage[] = [
   "scores",
   "opportunities",
   "bets",
+  "notify",
 ];
 
 export interface StageResult {
@@ -174,6 +179,10 @@ export async function runSync(
 
       case "bets":
         results.push(await runStage("bets", () => syncBets()));
+        break;
+
+      case "notify":
+        results.push(await runStage("notify", () => syncNotifications()));
         break;
 
       case "opportunities":

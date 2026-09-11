@@ -846,6 +846,32 @@ model BetLog {
   @@index([closesAt])
 }
 
+/// An alert that was raised, whether or not a delivery channel is configured.
+///
+/// Stored rather than fired-and-forgotten for two reasons. The dedupe key stops the same alert
+/// being re-sent on every sync pass — the identical problem `FeedEvent` solves, and solved the
+/// same way. And with a row per alert the app has a notification history that works with no
+/// channel configured at all, so the feature degrades to an in-app inbox rather than to nothing.
+model Notification {
+  id        String   @id @default(cuid())
+  kind      String
+  /// Prevents re-raising the same alert. Includes whatever makes the alert distinct — usually a
+  /// market id plus the day, so a genuinely new signal tomorrow is not suppressed by today's.
+  dedupeKey String   @unique
+  title     String
+  body      String   @db.Text
+  url       String?
+  priority  String   @default("normal")
+
+  createdAt DateTime  @default(now())
+  /// Null when no channel is configured, or when delivery failed.
+  sentAt    DateTime?
+  sendError String?   @db.Text
+
+  @@index([createdAt])
+  @@index([kind, createdAt])
+}
+
 model SyncRun {
   id         String    @id @default(cuid())
   stage      String
