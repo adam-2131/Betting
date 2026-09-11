@@ -38,6 +38,19 @@ export interface OpportunityWeights {
   clarity: number;
 }
 
+export interface ShortHorizonWeights {
+  /** Expected return per day of capital tied up, priced at the ask. */
+  capitalEfficiency: number;
+  /** Whether the edge survives the pessimistic end of the model's own uncertainty band. */
+  downsideTested: number;
+  /** Strength of the smart-money signal underneath the trade. */
+  signalConfidence: number;
+  /** How much of the theoretical edge is left after crossing the spread, and how deep the book is. */
+  executability: number;
+  /** How confidently we know when this settles and on what criteria. */
+  settlementCertainty: number;
+}
+
 export interface ScoringConfig {
   traderScore: {
     weights: TraderScoreWeights;
@@ -202,6 +215,51 @@ export interface ScoringConfig {
     /** Hours to resolution below this raises risk one level. */
     imminentResolutionHours: number;
   };
+
+  /**
+   * SHORT-HORIZON scoring — the "what pays out in the next few days" ranking.
+   *
+   * Separate from `opportunity` because it answers a different question. The opportunity score
+   * asks whether a signal is worth acting on at today's price and is deliberately horizon-blind;
+   * this asks how much return a dollar earns per day it stays locked up. The two disagree often,
+   * and on purpose: `opportunity.shortTimeRemainingPenalty` docks a market resolving within 12
+   * hours, which is exactly the property this ranking is looking for.
+   */
+  shortHorizon: {
+    weights: ShortHorizonWeights;
+    /**
+     * Floor on the days-of-capital denominator.
+     *
+     * Return per day is `return / days`, which without a floor diverges as the horizon shrinks — a
+     * 3% edge resolving in two hours computes to 36% per day and every near-expiry market would
+     * pin the top of the list on arithmetic alone. One day is also the honest number: settlement,
+     * redemption and manually finding the next bet mean capital does not actually turn over faster
+     * than that, so anything quicker is not really earning at the higher rate.
+     */
+    minCapitalDays: number;
+    /** Return per day of capital mapped onto 0-100 across this range. 0%..10% per day. */
+    returnPerDayRange: [number, number];
+    /** Liquidity mapped onto 0-100 logarithmically between these bounds. */
+    liquidityRange: [number, number];
+    /**
+     * Assumed round-trip execution cost beyond the spread, as a fraction of the price. Covers the
+     * fact that the quoted best ask is for an unknown size and the true fill can be worse.
+     */
+    slippageAllowance: number;
+    /** Below this price the payout ratio is tail-dominated; treated as a longshot. */
+    longshotPrice: number;
+    longshotPenalty: number;
+    /** Applied when the edge does not survive crossing the spread. */
+    negativeNetEdgePenalty: number;
+    /** Applied when there is no resolution date, so return per day cannot be computed at all. */
+    unknownHorizonPenalty: number;
+    /** Applied when liquidity is too thin to fill even a small stake at the quoted ask. */
+    thinBookUsd: number;
+    thinBookPenalty: number;
+    /** A side needs at least this many qualified traders before it is ranked here. */
+    minQualifiedTraders: number;
+    insufficientSamplePenalty: number;
+  };
 }
 
 export const DEFAULT_SCORING_CONFIG: ScoringConfig = {
@@ -331,6 +389,32 @@ export const DEFAULT_SCORING_CONFIG: ScoringConfig = {
     longshotPrice: 0.15,
     thinLiquidityUsd: 10_000,
     imminentResolutionHours: 24,
+  },
+
+  shortHorizon: {
+    // Sums to 100.
+    weights: {
+      capitalEfficiency: 40,
+      downsideTested: 20,
+      signalConfidence: 20,
+      executability: 12,
+      settlementCertainty: 8,
+    },
+    minCapitalDays: 1,
+    // A sustained 10% per day would be extraordinary. Anything computing above it is far more
+    // likely to be a modelling artifact than a real edge, so the scale saturates there rather
+    // than letting outliers dominate the ranking.
+    returnPerDayRange: [0, 0.1],
+    liquidityRange: [500, 100_000],
+    slippageAllowance: 0.01,
+    longshotPrice: 0.1,
+    longshotPenalty: 12,
+    negativeNetEdgePenalty: 35,
+    unknownHorizonPenalty: 25,
+    thinBookUsd: 1_000,
+    thinBookPenalty: 15,
+    minQualifiedTraders: 2,
+    insufficientSamplePenalty: 15,
   },
 };
 
