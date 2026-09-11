@@ -27,7 +27,18 @@ name: sync
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    # Every thirty minutes, because that is longer than a pass takes. A measured healthy run is
+    # 26.6 minutes — 14 in the pricing and scoring step, 12.2 in the watchlist step — and the
+    # schedule was every fifteen. Since `cancel-in-progress` is false, each pass was still
+    # running when the next was due, so runs queued and fell further behind; two of the first
+    # four were cancelled after sitting for 21 and 40 minutes. A schedule shorter than the work
+    # it triggers does not sync more often, it just builds a backlog.
+    #
+    # Freshness costs nothing here: the board step alone takes 14 minutes, so a quarter-hourly
+    # refresh was never achievable, and the app raises its own alert if no sync lands in three
+    # hours. If this ever needs to be genuinely frequent, the answer is two workflows — the cheap
+    # board refresh on its own schedule and the watchlist on a slower one — not a tighter cron.
+    - cron: "*/30 * * * *"
     # Gates the maintenance job below.
     - cron: "0 4 * * *"
   workflow_dispatch:
