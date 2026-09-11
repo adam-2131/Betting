@@ -302,6 +302,18 @@ model Market {
   clarityScore Float?
   clarityFlags String[]
 
+  // --- Sports. Populated only for markets Polymarket tags as sports; see lib/polymarket/sports.ts.
+  /// Kickoff. Present ONLY on game-level markets, so a non-null value is what distinguishes
+  /// "Bills vs. Texans on Sunday" from "Pro Football: 2027 Champion". Both are Category.SPORTS
+  /// and both carry an endDate, so nothing else separates them.
+  gameStartTime    DateTime?
+  /// Raw `sportsMarketType`, e.g. "moneyline" / "q2_totals". Most values are auto-generated
+  /// placeholder books quoted at 50/50 with a ~96¢ spread, which is why sports screens gate on it.
+  sportsMarketType String?
+  /// League slug from the event tags, e.g. "nfl". Used to estimate how long the game runs, since
+  /// endDate on a game market is kickoff rather than settlement.
+  league           String?
+
   lastSyncedAt DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
@@ -321,6 +333,8 @@ model Market {
   @@index([endDate])
   @@index([liquidity])
   @@index([eventId])
+  /// The sports screens always ask "which games are coming up", which is a range scan on this.
+  @@index([gameStartTime])
 }
 
 /// Written only when something moved materially (see sync/dedupe thresholds) so the table does not

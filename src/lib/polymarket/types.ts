@@ -82,6 +82,22 @@ export interface GammaMarket {
   groupItemTitle?: string;
   groupItemThreshold?: string;
 
+  /**
+   * SPORTS ONLY, and only on game-level markets. Season futures ("2027 Champion") omit it, which
+   * makes its presence the one reliable way to tell a game from a year-long bet.
+   *
+   * FORMAT TRAP: sent as `"2026-09-13 17:00:00+00"` — a space separator and a two-digit offset,
+   * neither of which is valid ECMAScript date-time grammar. Parse it with `parseGameStartTime`
+   * from `./sports`, never with a bare `new Date()`.
+   */
+  gameStartTime?: string;
+  /**
+   * SPORTS ONLY. e.g. "moneyline", "spreads", "totals", "q2_moneyline". 35 distinct values were
+   * observed across a single four-game NFL slate. See `./sports` for why most of them are
+   * untradeable placeholder books.
+   */
+  sportsMarketType?: string;
+
   questionID?: string;
   resolvedBy?: string;
   marketMakerAddress?: string;

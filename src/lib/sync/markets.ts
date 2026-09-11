@@ -64,6 +64,9 @@ function marketData(market: NormalizedMarket) {
     resolvedOutcomeIndex: market.resolvedOutcomeIndex,
     clarityScore: market.clarityScore,
     clarityFlags: market.clarityFlags,
+    gameStartTime: market.gameStartTime,
+    sportsMarketType: market.sportsMarketType,
+    league: market.league,
     lastSyncedAt: new Date(),
   };
 }
@@ -212,7 +215,13 @@ function isUnchanged(existing: Market, next: NormalizedMarket): boolean {
     existing.resolved === next.resolved &&
     existing.acceptingOrders === next.acceptingOrders &&
     existing.question === next.question &&
-    existing.endDate?.getTime() === next.endDate?.getTime()
+    existing.endDate?.getTime() === next.endDate?.getTime() &&
+    // Sports fields are compared for two reasons: a game can be rescheduled, and without them
+    // every market row that predates this column would compare equal forever and never be
+    // backfilled with its kickoff time.
+    existing.gameStartTime?.getTime() === next.gameStartTime?.getTime() &&
+    existing.sportsMarketType === next.sportsMarketType &&
+    existing.league === next.league
   );
 }
 

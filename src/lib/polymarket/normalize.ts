@@ -12,6 +12,7 @@
 import { Category } from "@prisma/client";
 import { safeNumber } from "@/lib/num";
 import { resolveCategory } from "./categories";
+import { leagueFromTags, parseGameStartTime } from "./sports";
 import { scoreResolutionClarity } from "@/lib/scoring/clarity";
 import type {
   DataActivity,
@@ -119,6 +120,12 @@ export interface NormalizedMarket {
   resolvedOutcomeIndex: number | null;
   clarityScore: number | null;
   clarityFlags: string[];
+  /** Kickoff. Non-null only on sports GAME markets, never on season futures. */
+  gameStartTime: Date | null;
+  /** Raw `sportsMarketType`, e.g. "moneyline". Classified by `polymarket/sports.ts`. */
+  sportsMarketType: string | null;
+  /** League slug drawn from the event tags, e.g. "nfl". Drives the game-length estimate. */
+  league: string | null;
 }
 
 /**
@@ -195,6 +202,9 @@ export function normalizeMarket(
     resolvedOutcomeIndex: resolveOutcomeIndex(prices, closed),
     clarityScore: clarity.score,
     clarityFlags: clarity.flags,
+    gameStartTime: parseGameStartTime(market.gameStartTime),
+    sportsMarketType: market.sportsMarketType ?? null,
+    league: leagueFromTags(tags),
   };
 }
 
