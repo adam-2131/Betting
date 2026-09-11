@@ -22,8 +22,9 @@
  */
 import { Category, TraderSource } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { fetchHolders } from "@/lib/polymarket/data";
+import { fetchHolders, fetchTrades } from "@/lib/polymarket/data";
 import { normalizeWallet } from "@/lib/polymarket/normalize";
+import { safeNumber } from "@/lib/num";
 
 export interface DiscoverStats {
   marketsSampled: number;
@@ -56,11 +57,11 @@ export interface DiscoverOptions {
  */
 export async function discoverFromHolders(options: DiscoverOptions = {}): Promise<DiscoverStats> {
   const {
-    marketSample = 150,
-    holdersPerMarket = 20,
+    marketSample = 300,
+    holdersPerMarket = 40,
     minShares = 100,
     minMarketsHeld = 2,
-    maxNewTraders = 200,
+    maxNewTraders = 400,
   } = options;
 
   const stats: DiscoverStats = {
@@ -163,6 +164,153 @@ export async function discoverFromHolders(options: DiscoverOptions = {}): Promis
       specialty: dominantCategory(entry.categories),
       source: TraderSource.HOLDERS,
       notes: `Discovered as a top holder in ${entry.markets} of the ${stats.marketsSampled} highest-volume markets sampled. Selected on market volume rather than on this wallet's results, so unlike a leaderboard entry it carries no implication that the wallet has been profitable.`,
+    })),
+    skipDuplicates: true,
+  });
+
+  stats.added = candidates.length;
+  return stats;
+}
+
+// ---------------------------------------------------------------------------
+// Discovery from the trade tape
+// ---------------------------------------------------------------------------
+
+export interface TapeDiscoverStats {
+  tradesScanned: number;
+  uniqueWallets: number;
+  alreadyTracked: number;
+  belowThreshold: number;
+  added: number;
+}
+
+export interface TapeDiscoverOptions {
+  /** How many recent trades to walk. The endpoint pages by offset. */
+  maxTrades?: number;
+  /** Page size per request. */
+  pageSize?: number;
+  /** Ignore fills below this notional — dust and rounding. */
+  minTradeUsd?: number;
+  /** A wallet must appear in at least this many DISTINCT markets to be added. */
+  minMarketsTraded?: number;
+  maxNewTraders?: number;
+}
+
+/**
+ * Discovers wallets from the global trade tape.
+ *
+ * This exists because the other two sources share a blind spot. `/v1/leaderboard` ranks by
+ * all-time realised profit, so it returns wallets that already won. `/holders` returns the LARGEST
+ * holders, so it returns wallets that are big. Neither returns a wallet that is simply trading a
+ * lot right now, and for short-horizon and sports markets that is exactly the population worth
+ * watching: whoever is active in a market resolving this week is expressing a view about this
+ * week, while a large holder may have taken their position months ago and forgotten it.
+ *
+ * The tape has its own bias, in the opposite direction: it over-samples HIGH-FREQUENCY wallets, so
+ * market makers and bots surface first. That is not fatal — the behaviour classifier already
+ * identifies and down-weights them downstream, and `excludeBots` can drop them entirely — but it
+ * does mean the raw tape is not a neutral sample either. Requiring a wallet to appear across
+ * several DISTINCT markets rather than merely many times filters the single-market grinders.
+ *
+ * Taken together the three sources give a watchlist that is "leaderboard winners, large holders,
+ * and currently-active traders". That is broader than any one of them and still not neutral, and
+ * `TraderSource` records which door each wallet came through so the difference stays visible.
+ */
+export async function discoverFromTape(
+  options: TapeDiscoverOptions = {},
+): Promise<TapeDiscoverStats> {
+  const {
+    maxTrades = 4000,
+    pageSize = 500,
+    minTradeUsd = 50,
+    minMarketsTraded = 2,
+    maxNewTraders = 300,
+  } = options;
+
+  const stats: TapeDiscoverStats = {
+    tradesScanned: 0,
+    uniqueWallets: 0,
+    alreadyTracked: 0,
+    belowThreshold: 0,
+    added: 0,
+  };
+
+  const seen = new Map<
+    string,
+    { markets: Set<string>; notional: number; name: string | null }
+  >();
+
+  for (let offset = 0; offset < maxTrades; offset += pageSize) {
+    let page;
+    try {
+      page = await fetchTrades({ limit: pageSize, offset });
+    } catch {
+      // A failed page must not abandon the sweep; the stage is safe to re-run.
+      break;
+    }
+    if (page.length === 0) break;
+
+    for (const trade of page) {
+      stats.tradesScanned++;
+      if (!trade.proxyWallet || !trade.conditionId) continue;
+
+      const size = safeNumber(trade.size) ?? 0;
+      const price = safeNumber(trade.price) ?? 0;
+      const notional = size * price;
+      if (notional < minTradeUsd) continue;
+
+      const wallet = normalizeWallet(trade.proxyWallet);
+      if (!wallet) continue;
+
+      const entry = seen.get(wallet) ?? { markets: new Set<string>(), notional: 0, name: null };
+      entry.markets.add(trade.conditionId);
+      entry.notional += notional;
+      if (!entry.name && trade.name) entry.name = trade.name;
+      seen.set(wallet, entry);
+    }
+
+    if (page.length < pageSize) break;
+  }
+
+  stats.uniqueWallets = seen.size;
+  if (seen.size === 0) return stats;
+
+  const wallets = [...seen.keys()];
+  const tracked = new Set<string>();
+  for (let i = 0; i < wallets.length; i += 500) {
+    const rows = await prisma.trader.findMany({
+      where: { wallet: { in: wallets.slice(i, i + 500) } },
+      select: { wallet: true },
+    });
+    for (const row of rows) tracked.add(row.wallet);
+  }
+
+  const candidates = [...seen.entries()]
+    .filter(([wallet, entry]) => {
+      if (tracked.has(wallet)) {
+        stats.alreadyTracked++;
+        return false;
+      }
+      if (entry.markets.size < minMarketsTraded) {
+        stats.belowThreshold++;
+        return false;
+      }
+      return true;
+    })
+    // Breadth first, then size. A wallet across many markets is more useful than one that
+    // happened to push a lot of notional through a single market.
+    .sort((a, b) => b[1].markets.size - a[1].markets.size || b[1].notional - a[1].notional)
+    .slice(0, maxNewTraders);
+
+  if (candidates.length === 0) return stats;
+
+  await prisma.trader.createMany({
+    data: candidates.map(([wallet, entry]) => ({
+      wallet,
+      displayName: entry.name ?? `${wallet.slice(0, 6)}…${wallet.slice(-4)}`,
+      specialty: Category.UNKNOWN,
+      source: TraderSource.HOLDERS,
+      notes: `Discovered on the live trade tape, active across ${entry.markets.size} distinct markets in the window sampled. Selected on recent activity rather than on profit or position size, so this wallet carries no implication of having been either successful or large. The tape over-represents high-frequency wallets, so this one may turn out to be automated.`,
     })),
     skipDuplicates: true,
   });

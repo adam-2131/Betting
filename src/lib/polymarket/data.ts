@@ -136,15 +136,23 @@ export async function fetchLeaderboard(limit = 50): Promise<DataLeaderboardEntry
   return Array.isArray(result) ? result : [];
 }
 
-/** Global trade tape, optionally scoped to a market or user. */
+/**
+ * Global trade tape, optionally scoped to a market or user.
+ *
+ * `offset` pages backwards through the tape; verified against production that consecutive pages
+ * do not overlap. Note that a single fill appears TWICE, once for each counterparty — the buyer
+ * and the seller are separate rows sharing a transaction hash — so callers counting distinct
+ * wallets get both sides of every trade, which is what trader discovery wants.
+ */
 export async function fetchTrades(
-  options: { user?: string; market?: string; limit?: number } = {},
+  options: { user?: string; market?: string; limit?: number; offset?: number } = {},
 ): Promise<DataTrade[]> {
   const result = await apiGet<DataTrade[] | null>("data", "/trades", {
     params: {
       user: options.user ? normalizeWallet(options.user) : undefined,
       market: options.market,
       limit: options.limit ?? 100,
+      offset: options.offset,
       takerOnly: false,
     },
     ttlMs: TTL.activity,

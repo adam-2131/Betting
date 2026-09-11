@@ -12,7 +12,7 @@ import { prisma } from "@/lib/db";
 import { pruneFeed } from "./feed";
 import { refreshStaleTrackedMarkets, syncMarkets } from "./markets";
 import { syncOpportunities } from "./opportunities";
-import { discoverFromHolders } from "./discover";
+import { discoverFromHolders, discoverFromTape } from "./discover";
 import { syncPriceHistory } from "./prices";
 import { relinkOrphans } from "./relink";
 import { syncScores } from "./scores";
@@ -121,9 +121,16 @@ export async function runSync(
       case "traders":
         results.push(
           await runStage("traders", async () => {
-            const perTrader = await syncTraders({ limit: options.traderLimit });
+            const summary = await syncTraders({ limit: options.traderLimit });
+            const perTrader = summary.results;
             return {
+              // Both numbers matter now that the watchlist can be far larger than one pass:
+              // `traders` is what was refreshed, `watchlistSize` is what is being tracked.
               traders: perTrader.length,
+              watchlistSize: summary.watchlistSize,
+              byTier: summary.byTier,
+              deferred: summary.deferred,
+              notDue: summary.notDue,
               positions: perTrader.reduce((acc, t) => acc + t.positions, 0),
               closedPositions: perTrader.reduce((acc, t) => acc + t.closedPositions, 0),
               closedUnchanged: perTrader.reduce((acc, t) => acc + t.closedPositionsUnchanged, 0),
@@ -135,7 +142,16 @@ export async function runSync(
         break;
 
       case "discover":
-        results.push(await runStage("discover", () => discoverFromHolders()));
+        results.push(
+          await runStage("discover", async () => {
+            // Two sources with opposite biases. Holders over-samples LARGE wallets, the tape
+            // over-samples ACTIVE ones. Running both widens the watchlist in two directions
+            // instead of deepening one of them.
+            const holders = await discoverFromHolders();
+            const tape = await discoverFromTape();
+            return { holders, tape, added: holders.added + tape.added };
+          }),
+        );
         break;
 
       case "prices":

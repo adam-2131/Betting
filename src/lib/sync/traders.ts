@@ -23,6 +23,7 @@ import { resolveCategory } from "@/lib/polymarket/categories";
 import { safeNumber, sum } from "@/lib/num";
 import { ensureMarketsByConditionIds } from "./markets";
 import { recordPositionChanges } from "./feed";
+import { historyDepthFor, selectTradersToSync, type SyncTier } from "./trader-selection";
 
 const POSITION_SNAPSHOT_SIZE_DELTA = 0.02; // 2%
 const POSITION_SNAPSHOT_MAX_AGE_MS = 6 * 60 * 60 * 1000;
@@ -40,11 +41,14 @@ export interface TraderSyncStats {
   error?: string;
 }
 
-/** The first time a wallet appears we pull a deeper history; after that, only what is new. */
-const INITIAL_ACTIVITY_ITEMS = 3000;
-const INCREMENTAL_ACTIVITY_ITEMS = 1000;
-
-export async function syncTrader(trader: Trader): Promise<TraderSyncStats> {
+export async function syncTrader(
+  trader: Trader,
+  /** How much history to pull. Set by the trader's refresh tier — see `trader-selection.ts`. */
+  depth: { closedPositions: number; activityItems: number } = {
+    closedPositions: 1000,
+    activityItems: 3000,
+  },
+): Promise<TraderSyncStats> {
   const stats: TraderSyncStats = {
     wallet: trader.wallet,
     positions: 0,
@@ -57,14 +61,12 @@ export async function syncTrader(trader: Trader): Promise<TraderSyncStats> {
   };
 
   try {
-    const isFirstSync = trader.lastSyncedAt === null;
-
     const [rawPositions, rawClosed, rawActivity, portfolioValue, tradedCount] = await Promise.all([
       fetchPositions(trader.wallet),
-      fetchClosedPositions(trader.wallet, { maxItems: isFirstSync ? 1000 : 300 }),
+      fetchClosedPositions(trader.wallet, { maxItems: depth.closedPositions }),
       fetchActivity(trader.wallet, {
         since: trader.lastActivityTs ?? undefined,
-        maxItems: isFirstSync ? INITIAL_ACTIVITY_ITEMS : INCREMENTAL_ACTIVITY_ITEMS,
+        maxItems: depth.activityItems,
       }),
       fetchPortfolioValue(trader.wallet),
       fetchTradedCount(trader.wallet),
@@ -357,20 +359,119 @@ async function storeActivity(
   return result.count;
 }
 
-export async function syncTraders(options: { limit?: number } = {}): Promise<TraderSyncStats[]> {
-  const limit = options.limit ?? Number(process.env.SYNC_TRADER_LIMIT ?? 100);
+/**
+ * How many wallets are synced at once.
+ *
+ * The previous implementation was strictly sequential, on the reasoning that the HTTP layer
+ * already parallelises. It does — but only WITHIN one wallet, across the five endpoints fetched
+ * together. The expensive part of a wallet is `/closed-positions`, which pages fifty rows at a
+ * time and so walks its pages one after another. During that walk the per-host token bucket sits
+ * mostly idle, and the whole watchlist waits behind it.
+ *
+ * Running several wallets at once fills that idle time. It does not raise the request rate, which
+ * the token bucket still governs centrally; it only stops the bucket from starving. Memory stays
+ * bounded because each worker holds one wallet's rows at a time.
+ */
+const TRADER_SYNC_CONCURRENCY = Number(process.env.SYNC_TRADER_CONCURRENCY ?? 4);
 
-  const traders = await prisma.trader.findMany({
+export interface TraderSyncSummary {
+  results: TraderSyncStats[];
+  /** Wallets due for a refresh that did not fit in this pass's budget. */
+  deferred: number;
+  /** Wallets skipped because their tier's refresh interval had not elapsed. */
+  notDue: number;
+  /** How the budget was spent across refresh tiers. */
+  byTier: Record<SyncTier, number>;
+  watchlistSize: number;
+}
+
+/**
+ * Runs `worker` over `items` with at most `concurrency` in flight, preserving input order in the
+ * results. Deliberately tiny: a dependency for this would be silly, and the ordering guarantee
+ * matters because the caller reports per-wallet stats.
+ */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) return [];
+  const limit = Math.max(1, Math.min(concurrency, items.length));
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+
+  async function run(): Promise<void> {
+    for (;;) {
+      const index = cursor++;
+      if (index >= items.length) return;
+      results[index] = await worker(items[index]);
+    }
+  }
+
+  await Promise.all(Array.from({ length: limit }, run));
+  return results;
+}
+
+export async function syncTraders(
+  options: { limit?: number; concurrency?: number } = {},
+): Promise<TraderSyncSummary> {
+  const budget = options.limit ?? Number(process.env.SYNC_TRADER_LIMIT ?? 250);
+  const concurrency = options.concurrency ?? TRADER_SYNC_CONCURRENCY;
+  const now = new Date();
+
+  // The whole active watchlist is loaded, but only the columns the selection policy reads. This
+  // is a narrow projection over what is now potentially thousands of rows, not the full records.
+  const watchlist = await prisma.trader.findMany({
     where: { active: true },
-    orderBy: [{ lastSyncedAt: { sort: "asc", nulls: "first" } }],
-    take: limit,
+    select: {
+      id: true,
+      wallet: true,
+      lastSyncedAt: true,
+      lastActivityTs: true,
+      syncError: true,
+      performance: { select: { smartScore: true } },
+    },
   });
 
-  const results: TraderSyncStats[] = [];
-  // Sequential on purpose: the shared rate limiter already parallelises at the HTTP layer, and
-  // this keeps database writes predictable and memory flat.
-  for (const trader of traders) {
-    results.push(await syncTrader(trader));
+  const selection = selectTradersToSync(
+    watchlist.map((t) => ({
+      id: t.id,
+      wallet: t.wallet,
+      lastSyncedAt: t.lastSyncedAt,
+      lastActivityTs: t.lastActivityTs,
+      smartScore: t.performance?.smartScore ?? null,
+      hasSyncError: t.syncError !== null,
+    })),
+    { budget, now },
+  );
+
+  if (selection.selected.length === 0) {
+    return {
+      results: [],
+      deferred: selection.deferred,
+      notDue: selection.notDue,
+      byTier: selection.byTier,
+      watchlistSize: watchlist.length,
+    };
   }
-  return results;
+
+  // Full records only for the wallets actually being synced.
+  const traders = await prisma.trader.findMany({
+    where: { id: { in: selection.selected.map((t) => t.id) } },
+  });
+
+  const results = await mapWithConcurrency(traders, concurrency, (trader) =>
+    syncTrader(
+      trader,
+      historyDepthFor(selection.tierById.get(trader.id) ?? "COLD", trader.lastSyncedAt === null),
+    ),
+  );
+
+  return {
+    results,
+    deferred: selection.deferred,
+    notDue: selection.notDue,
+    byTier: selection.byTier,
+    watchlistSize: watchlist.length,
+  };
 }

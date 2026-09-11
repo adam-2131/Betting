@@ -16,11 +16,14 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
+const fetchTrades = vi.fn();
+
 vi.mock("@/lib/polymarket/data", () => ({
   fetchHolders: (...args: unknown[]) => fetchHolders(...args),
+  fetchTrades: (...args: unknown[]) => fetchTrades(...args),
 }));
 
-const { discoverFromHolders } = await import("./discover");
+const { discoverFromHolders, discoverFromTape } = await import("./discover");
 
 function market(conditionId: string, category: Category = Category.SPORTS) {
   return { conditionId, category };
@@ -210,6 +213,133 @@ describe("discoverFromHolders", () => {
     const stats = await discoverFromHolders();
 
     expect(stats).toMatchObject({ marketsSampled: 0, added: 0, uniqueWallets: 0 });
+    expect(createMany).not.toHaveBeenCalled();
+  });
+});
+
+function trade(
+  proxyWallet: string,
+  conditionId: string,
+  size = 1000,
+  price = 0.5,
+  extra: Record<string, unknown> = {},
+) {
+  return { proxyWallet, conditionId, size, price, ...extra };
+}
+
+describe("discoverFromTape", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    findManyTraders.mockResolvedValue([]);
+    createMany.mockResolvedValue({ count: 0 });
+  });
+
+  it("adds a wallet active across several distinct markets", async () => {
+    fetchTrades.mockResolvedValueOnce([trade("0xAAA", "c1"), trade("0xAAA", "c2")]);
+
+    const stats = await discoverFromTape({ pageSize: 500, minMarketsTraded: 2 });
+
+    expect(stats.added).toBe(1);
+    expect(createMany.mock.calls[0][0].data[0].wallet).toBe("0xaaa");
+  });
+
+  it("skips a single-market grinder, which is what the tape over-produces", async () => {
+    // The tape's bias is toward high-FREQUENCY wallets, so breadth is the filter that matters.
+    fetchTrades.mockResolvedValueOnce([
+      trade("0xBOT", "c1"),
+      trade("0xBOT", "c1"),
+      trade("0xBOT", "c1"),
+    ]);
+
+    const stats = await discoverFromTape({ pageSize: 500, minMarketsTraded: 2 });
+
+    expect(stats.belowThreshold).toBe(1);
+    expect(stats.added).toBe(0);
+  });
+
+  it("ignores fills below the notional floor", async () => {
+    // size x price, not size: 10 shares at 2c is 20c of risk, not a signal.
+    fetchTrades.mockResolvedValueOnce([trade("0xDUST", "c1", 10, 0.02)]);
+
+    const stats = await discoverFromTape({ pageSize: 500, minTradeUsd: 50, minMarketsTraded: 1 });
+
+    expect(stats.uniqueWallets).toBe(0);
+    expect(stats.added).toBe(0);
+  });
+
+  it("pages through the tape until a short page arrives", async () => {
+    fetchTrades
+      .mockResolvedValueOnce([trade("0xAAA", "c1"), trade("0xAAA", "c2")])
+      .mockResolvedValueOnce([trade("0xBBB", "c3")]);
+
+    await discoverFromTape({ pageSize: 2, maxTrades: 100, minMarketsTraded: 1 });
+
+    expect(fetchTrades).toHaveBeenCalledTimes(2);
+    expect(fetchTrades.mock.calls[0][0]).toMatchObject({ limit: 2, offset: 0 });
+    expect(fetchTrades.mock.calls[1][0]).toMatchObject({ limit: 2, offset: 2 });
+  });
+
+  it("stops at the trade budget rather than walking the whole tape", async () => {
+    fetchTrades.mockResolvedValue([trade("0xAAA", "c1"), trade("0xAAA", "c2")]);
+
+    await discoverFromTape({ pageSize: 2, maxTrades: 4, minMarketsTraded: 1 });
+
+    expect(fetchTrades).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps whatever it collected when a page fails", async () => {
+    fetchTrades
+      .mockResolvedValueOnce([trade("0xAAA", "c1"), trade("0xAAA", "c2")])
+      .mockRejectedValueOnce(new Error("500"));
+
+    const stats = await discoverFromTape({ pageSize: 2, maxTrades: 100, minMarketsTraded: 1 });
+
+    expect(stats.added).toBe(1);
+  });
+
+  it("does not re-add a wallet already on the watchlist", async () => {
+    fetchTrades.mockResolvedValueOnce([trade("0xKNOWN", "c1"), trade("0xKNOWN", "c2")]);
+    findManyTraders.mockResolvedValue([{ wallet: "0xknown" }]);
+
+    const stats = await discoverFromTape({ pageSize: 500, minMarketsTraded: 1 });
+
+    expect(stats.alreadyTracked).toBe(1);
+    expect(stats.added).toBe(0);
+  });
+
+  it("records a note that claims neither profit nor size, and admits the bot bias", async () => {
+    fetchTrades.mockResolvedValueOnce([trade("0xAAA", "c1"), trade("0xAAA", "c2")]);
+
+    await discoverFromTape({ pageSize: 500, minMarketsTraded: 1 });
+
+    const note: string = createMany.mock.calls[0][0].data[0].notes.toLowerCase();
+    expect(note).toContain("carries no implication");
+    expect(note).toContain("automated");
+    for (const word of ["profitable trader", "top trader", "winning", "smart money"]) {
+      expect(note).not.toContain(word);
+    }
+  });
+
+  it("prefers breadth over notional when capping", async () => {
+    fetchTrades.mockResolvedValueOnce([
+      trade("0xWIDE", "c1"),
+      trade("0xWIDE", "c2"),
+      trade("0xWIDE", "c3"),
+      trade("0xBIG", "c4", 1_000_000),
+    ]);
+
+    const stats = await discoverFromTape({ pageSize: 500, minMarketsTraded: 1, maxNewTraders: 1 });
+
+    expect(stats.added).toBe(1);
+    expect(createMany.mock.calls[0][0].data[0].wallet).toBe("0xwide");
+  });
+
+  it("does nothing gracefully when the tape is empty", async () => {
+    fetchTrades.mockResolvedValueOnce([]);
+
+    const stats = await discoverFromTape({ pageSize: 500 });
+
+    expect(stats).toMatchObject({ added: 0, uniqueWallets: 0 });
     expect(createMany).not.toHaveBeenCalled();
   });
 });
