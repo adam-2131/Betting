@@ -18,6 +18,7 @@ import {
   normalizeClosedPosition,
   normalizePosition,
   type NormalizedActivity,
+  type NormalizedPosition,
 } from "@/lib/polymarket/normalize";
 import { resolveCategory } from "@/lib/polymarket/categories";
 import { safeNumber, sum } from "@/lib/num";
@@ -126,7 +127,14 @@ export async function syncTrader(
       }
     }
 
+    // Creates are batched, updates are not — the same asymmetry the market sync uses, and for the
+    // same reason. Prisma has no batch upsert, so a row-at-a-time loop costs one network round
+    // trip per position. Against a hosted database that is what took the trader stage from
+    // seconds to tens of minutes: a wallet seen for the first time has every position new.
     const positionSnapshotQueue: Prisma.PositionSnapshotCreateManyInput[] = [];
+    const positionsToCreate: Prisma.PositionCreateManyInput[] = [];
+    /** New positions wanting a snapshot, whose row id is unknown until after the batch insert. */
+    const snapshotAfterCreate: NormalizedPosition[] = [];
 
     for (const position of positions) {
       const market = markets.get(position.conditionId);
@@ -135,9 +143,9 @@ export async function syncTrader(
 
       const firstBuy = firstBuyByAsset.get(position.asset) ?? null;
       const existing = previousByAsset.get(position.asset);
-      const row = await prisma.position.upsert({
-        where: { traderId_asset: { traderId: trader.id, asset: position.asset } },
-        create: {
+
+      if (!existing) {
+        positionsToCreate.push({
           traderId: trader.id,
           marketId: market.id,
           asset: position.asset,
@@ -158,8 +166,16 @@ export async function syncTrader(
           negativeRisk: position.negativeRisk,
           openedAt: firstBuy,
           isOpen: true,
-        },
-        update: {
+        });
+        // A brand-new position always warrants its first snapshot.
+        snapshotAfterCreate.push(position);
+        stats.positions++;
+        continue;
+      }
+
+      const row = await prisma.position.update({
+        where: { id: existing.id },
+        data: {
           marketId: market.id,
           size: position.size,
           avgPrice: position.avgPrice,
@@ -172,7 +188,7 @@ export async function syncTrader(
           curPrice: position.curPrice,
           redeemable: position.redeemable,
           mergeable: position.mergeable,
-          openedAt: firstBuy ?? existing?.openedAt ?? null,
+          openedAt: firstBuy ?? existing.openedAt ?? null,
           lastSeenAt: new Date(),
           isOpen: true,
         },
@@ -183,6 +199,29 @@ export async function syncTrader(
       if (shouldSnapshotPosition(last, position.size)) {
         positionSnapshotQueue.push({
           positionId: row.id,
+          size: position.size,
+          avgPrice: position.avgPrice,
+          currentValue: position.currentValue,
+          cashPnl: position.cashPnl,
+          curPrice: position.curPrice,
+        });
+      }
+    }
+
+    if (positionsToCreate.length > 0) {
+      await prisma.position.createMany({ data: positionsToCreate, skipDuplicates: true });
+
+      // createMany returns a count, so ids come from one read rather than one insert per row.
+      const created = await prisma.position.findMany({
+        where: { traderId: trader.id, asset: { in: snapshotAfterCreate.map((p) => p.asset) } },
+        select: { id: true, asset: true },
+      });
+      const idByAsset = new Map(created.map((r) => [r.asset, r.id]));
+      for (const position of snapshotAfterCreate) {
+        const id = idByAsset.get(position.asset);
+        if (!id) continue;
+        positionSnapshotQueue.push({
+          positionId: id,
           size: position.size,
           avgPrice: position.avgPrice,
           currentValue: position.currentValue,
@@ -225,6 +264,11 @@ export async function syncTrader(
       }
     }
 
+    // The heaviest write in the stage: a wallet seen for the first time brings up to a thousand
+    // settled positions, all of them new. One upsert each is a thousand round trips, which is
+    // what made a first sync of a large watchlist unfinishable against a hosted database.
+    const closedToCreate: Prisma.ClosedPositionCreateManyInput[] = [];
+
     for (const position of closed) {
       const prior = existingClosed.get(position.asset);
       if (prior && prior.realizedPnl === position.realizedPnl && prior.won === position.won) {
@@ -235,9 +279,8 @@ export async function syncTrader(
       const market = markets.get(position.conditionId);
       const category = market?.category ?? resolveCategory([], position.title);
 
-      await prisma.closedPosition.upsert({
-        where: { traderId_asset: { traderId: trader.id, asset: position.asset } },
-        create: {
+      if (!prior) {
+        closedToCreate.push({
           traderId: trader.id,
           marketId: market?.id ?? null,
           asset: position.asset,
@@ -256,8 +299,16 @@ export async function syncTrader(
           won: position.won,
           endDate: position.endDate,
           resolvedAt: position.resolvedAt,
-        },
-        update: {
+        });
+        stats.closedPositions++;
+        continue;
+      }
+
+      // A settled position whose reported figures moved. Rare, since settlement is final, so this
+      // stays row-at-a-time rather than complicating the path that actually matters.
+      await prisma.closedPosition.update({
+        where: { traderId_asset: { traderId: trader.id, asset: position.asset } },
+        data: {
           marketId: market?.id ?? null,
           category,
           avgPrice: position.avgPrice,
@@ -270,6 +321,13 @@ export async function syncTrader(
         },
       });
       stats.closedPositions++;
+    }
+
+    for (let i = 0; i < closedToCreate.length; i += 500) {
+      await prisma.closedPosition.createMany({
+        data: closedToCreate.slice(i, i + 500),
+        skipDuplicates: true,
+      });
     }
 
     // --- Portfolio snapshot ---
