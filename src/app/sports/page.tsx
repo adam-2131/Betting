@@ -20,7 +20,8 @@ import { intPlain } from "@/lib/num";
 import { Card, EmptyState, SectionTitle, Stat } from "@/components/ui/primitives";
 import { GameCard } from "@/components/game-card";
 import { AutoRefresh } from "@/components/auto-refresh";
-import { SportsFilterBar, sportsHours } from "./filters";
+import { DEFAULT_SPORTS_WINDOW, sportsHours } from "../filter-params";
+import { SportsFilterBar } from "./filters";
 
 export const dynamic = "force-dynamic";
 
@@ -30,7 +31,7 @@ export default async function SportsPage({
   searchParams: Promise<{ window?: string; props?: string; live?: string }>;
 }) {
   const query = await searchParams;
-  const windowValue = query.window ?? "4d";
+  const windowValue = query.window ?? DEFAULT_SPORTS_WINDOW;
   const includeUntradeable = query.props === "1";
   const includeInPlay = query.live === "1";
 

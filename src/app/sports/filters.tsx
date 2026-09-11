@@ -11,18 +11,8 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useTransition } from "react";
 import { cn } from "@/components/ui/primitives";
-
-export const SPORTS_WINDOWS: Array<{ value: string; label: string; hours: number }> = [
-  { value: "12h", label: "Today", hours: 12 },
-  { value: "48h", label: "48 hours", hours: 48 },
-  { value: "4d", label: "4 days", hours: 96 },
-  { value: "7d", label: "7 days", hours: 168 },
-  { value: "14d", label: "14 days", hours: 336 },
-];
-
-export function sportsHours(value: string | undefined): number {
-  return SPORTS_WINDOWS.find((w) => w.value === value)?.hours ?? 96;
-}
+// Window options live in `../filter-params`, NOT here — see the note in cash-soon/filters.tsx.
+import { DEFAULT_SPORTS_WINDOW, SPORTS_WINDOWS } from "../filter-params";
 
 export function SportsFilterBar({
   window,
@@ -54,7 +44,7 @@ export function SportsFilterBar({
     push(next);
   };
 
-  const active = window !== "4d" || includeUntradeable || includeInPlay;
+  const active = window !== DEFAULT_SPORTS_WINDOW || includeUntradeable || includeInPlay;
 
   return (
     <div
@@ -66,7 +56,7 @@ export function SportsFilterBar({
           <button
             key={option.value}
             type="button"
-            onClick={() => setParam("window", option.value, "4d")}
+            onClick={() => setParam("window", option.value, DEFAULT_SPORTS_WINDOW)}
             aria-pressed={window === option.value}
             className={cn(
               "rounded border px-2 py-0.5 text-2xs transition-colors",

@@ -17,6 +17,40 @@ export const RESOLUTION_WINDOWS: Array<{ value: string; label: string; hours: nu
   { value: "30d", label: "30 days", hours: 720 },
 ];
 
+/**
+ * Cash Soon windows. Filters on estimated SETTLEMENT rather than on the market's close date —
+ * for a game market Polymarket's end date is kickoff, and capital is not free until the game has
+ * finished and the market settles.
+ */
+export const SETTLEMENT_WINDOWS: Array<{ value: string; label: string; hours: number }> = [
+  { value: "24h", label: "24 hours", hours: 24 },
+  { value: "3d", label: "3 days", hours: 72 },
+  { value: "7d", label: "7 days", hours: 168 },
+  { value: "14d", label: "14 days", hours: 336 },
+  { value: "30d", label: "30 days", hours: 720 },
+];
+
+export const DEFAULT_SETTLEMENT_WINDOW = "7d";
+
+export function settlementHours(value: string | undefined): number {
+  return SETTLEMENT_WINDOWS.find((w) => w.value === value)?.hours ?? 168;
+}
+
+/** Sports windows, measured to kickoff rather than to settlement. */
+export const SPORTS_WINDOWS: Array<{ value: string; label: string; hours: number }> = [
+  { value: "12h", label: "Today", hours: 12 },
+  { value: "48h", label: "48 hours", hours: 48 },
+  { value: "4d", label: "4 days", hours: 96 },
+  { value: "7d", label: "7 days", hours: 168 },
+  { value: "14d", label: "14 days", hours: 336 },
+];
+
+export const DEFAULT_SPORTS_WINDOW = "4d";
+
+export function sportsHours(value: string | undefined): number {
+  return SPORTS_WINDOWS.find((w) => w.value === value)?.hours ?? 96;
+}
+
 export const CATEGORY_LABELS: Record<Category, string> = {
   [Category.POLITICS]: "Politics",
   [Category.ECONOMICS]: "Economics",

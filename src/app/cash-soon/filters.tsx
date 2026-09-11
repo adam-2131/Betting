@@ -14,20 +14,16 @@ import type { Category } from "@prisma/client";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useTransition } from "react";
 import { cn } from "@/components/ui/primitives";
-import { CATEGORY_LABELS } from "../filter-params";
+// Window options live in `../filter-params`, NOT here. That module carries a header explaining
+// why: the server page reads `searchParams` and needs the same list this client component renders,
+// and a helper exported from a "use client" file cannot be called from the server. Defining them
+// here threw "Attempted to call settlementHours() from the server" at request time.
+import {
+  CATEGORY_LABELS,
+  DEFAULT_SETTLEMENT_WINDOW,
+  SETTLEMENT_WINDOWS,
+} from "../filter-params";
 import { FILTERABLE_CATEGORIES } from "@/lib/polymarket/categories";
-
-export const SETTLEMENT_WINDOWS: Array<{ value: string; label: string; hours: number }> = [
-  { value: "24h", label: "24 hours", hours: 24 },
-  { value: "3d", label: "3 days", hours: 72 },
-  { value: "7d", label: "7 days", hours: 168 },
-  { value: "14d", label: "14 days", hours: 336 },
-  { value: "30d", label: "30 days", hours: 720 },
-];
-
-export function settlementHours(value: string | undefined): number {
-  return SETTLEMENT_WINDOWS.find((w) => w.value === value)?.hours ?? 168;
-}
 
 export function CashSoonFilterBar({
   categories,
@@ -67,7 +63,7 @@ export function CashSoonFilterBar({
 
   const setWindow = (value: string) => {
     const next = new URLSearchParams(params.toString());
-    if (value === "7d") next.delete("window");
+    if (value === DEFAULT_SETTLEMENT_WINDOW) next.delete("window");
     else next.set("window", value);
     push(next);
   };
@@ -79,7 +75,8 @@ export function CashSoonFilterBar({
     push(next);
   };
 
-  const active = categories.length > 0 || window !== "7d" || showNegativeEdge;
+  const active =
+    categories.length > 0 || window !== DEFAULT_SETTLEMENT_WINDOW || showNegativeEdge;
 
   return (
     <div

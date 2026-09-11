@@ -16,8 +16,13 @@ import { formatPercent, intPlain } from "@/lib/num";
 import { Card, EmptyState, SectionTitle, Stat } from "@/components/ui/primitives";
 import { CashSoonCard } from "@/components/cash-soon-card";
 import { AutoRefresh } from "@/components/auto-refresh";
-import { parseCategories } from "../filter-params";
-import { CashSoonFilterBar, SETTLEMENT_WINDOWS, settlementHours } from "./filters";
+import {
+  DEFAULT_SETTLEMENT_WINDOW,
+  parseCategories,
+  SETTLEMENT_WINDOWS,
+  settlementHours,
+} from "../filter-params";
+import { CashSoonFilterBar } from "./filters";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +33,7 @@ export default async function CashSoonPage({
 }) {
   const query = await searchParams;
   const categories = parseCategories(query.category);
-  const windowValue = query.window ?? "7d";
+  const windowValue = query.window ?? DEFAULT_SETTLEMENT_WINDOW;
   const withinHours = settlementHours(windowValue);
   // Opt-in view of the rows whose edge the spread already ate, so the filter stays inspectable.
   const showNegativeEdge = query.all === "1";
