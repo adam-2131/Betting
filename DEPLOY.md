@@ -3,24 +3,34 @@
 Everything below is free. Where a "free" tier has a catch that would break this app, the catch is
 stated rather than glossed over.
 
-## Why it cannot go on Vercel
+## The recommended path: no server, no credit card
 
-The obvious answer for a Next.js app is Vercel, and it does not work here.
+The constraint that shapes everything is that **the sync does not fit in a serverless function**.
+A full pass has been measured at seventeen minutes and a steady-state one at six to eight; Vercel's
+hobby functions cap at sixty seconds, and `/api/cron/sync` declares `maxDuration = 300` because
+five minutes is the ceiling on the platforms it was written for.
 
-A full trader sync has been measured at **seventeen minutes**. Vercel's hobby functions cap at
-sixty seconds, and `/api/cron/sync` declares `maxDuration = 300` because five minutes is the
-ceiling on the platforms it was written for. Hobby cron also fires at most once a day, which is
-useless for markets that settle this evening.
+The mistake is concluding that the whole app therefore needs a server. Only the **sync** does. The
+website is ordinary page loads that query a database, which serverless handles perfectly well. Run
+them in different places and every piece lands in a free tier:
 
-You could split the sync into chunks small enough to fit, but that means many more scheduled
-invocations and a lot of machinery to make a long job pretend to be a short one. A single small
-box that runs `npm run auto` is simpler and free, so that is what this targets.
+| Piece | Where | Cost | Card needed |
+| --- | --- | --- | --- |
+| Database | **Neon** | Free tier | No |
+| Website | **Vercel** | Hobby | No |
+| Sync loop | **GitHub Actions** | Free | No |
 
-## The free options, and their catches
+All three sign in with a GitHub account. Nothing asks for payment details, and there is no VM to
+maintain, patch or forget about. `.github/workflows/sync.yml` is already in this repo.
+
+Skip to **"The no-card setup"** below. The VM section after it is only worth reading if you would
+rather run everything in one place.
+
+## Running it on a VM instead, and the catches
 
 | Host | Genuinely free? | Catch |
 | --- | --- | --- |
-| **Oracle Cloud Always Free** | Yes, indefinitely | Signup wants a card for verification. Region capacity for ARM instances is often exhausted; retry or pick another region. Fiddliest signup, best result. |
+| **Oracle Cloud Always Free** | Yes, indefinitely | Best result, worst signup. Wants a card, ARM capacity is often exhausted, and accounts are refused or locked out often enough that it should not be anyone's only plan. |
 | **Google Cloud Always Free** | Yes, one `e2-micro` | Only in `us-west1`, `us-central1`, `us-east1`. 1 GB RAM is tight but workable. Card required. |
 | **Fly.io** | Small allowance | Now pay-as-you-go with a modest free credit. Fine for a while, not guaranteed free forever. |
 | **Render** | Free web service | **Spins down after 15 minutes of inactivity**, which stops the sync loop. Free Postgres expires after 90 days. Not suitable. |
@@ -33,6 +43,88 @@ there is no separate database to pay for. The signup is the worst part of the wh
 
 **If you want to avoid the signup**, keeping it on your own machine is a legitimate answer. The
 only thing you lose is alerts while the machine is asleep.
+
+## The no-card setup
+
+Roughly twenty minutes, most of it waiting for builds. You need a GitHub account and nothing else.
+
+### 1. Put the code on GitHub
+
+```bash
+cd /path/to/polyalpha
+git remote add origin https://github.com/<you>/polyalpha.git
+git push -u origin main
+```
+
+**Public or private?** Actions minutes are unlimited on public repos and capped at 2,000 a month
+on private ones — and a 15-minute schedule needs about 5,800. So either make the repo public, or
+keep it private and widen the cron in `.github/workflows/sync.yml` to every two hours.
+
+Public is safe here and worth being clear about why: the repository contains code. Your bets, your
+wallet and your database live in Neon, your webhook and password live in GitHub Secrets, and `.env`
+is gitignored. None of it is in the repo. **Check `git status` shows no `.env` before pushing.**
+
+### 2. Database — Neon
+
+Sign up at `neon.tech` with GitHub. Create a project. Copy the **pooled** connection string, the
+one with `-pooler` in the host.
+
+The pooled one matters: serverless page loads open a connection per invocation, and a direct
+connection runs out of slots under that pattern. Postgres will start refusing connections and the
+site will fail in a way that looks like a bug in the app.
+
+### 3. Website — Vercel
+
+Sign up at `vercel.com` with GitHub, import the repo, and add these environment variables before
+the first deploy:
+
+```
+DATABASE_URL       <the pooled Neon string>
+APP_PASSWORD       <a long password you choose>
+PUBLIC_BASE_URL    https://<your-project>.vercel.app
+ALERT_WEBHOOK_URL  <your ntfy or Discord URL>
+```
+
+Deploy. Vercel gives HTTPS and a URL automatically. `APP_PASSWORD` is what stops anyone else
+reading your bet log at that public address, so do not skip it.
+
+### 4. Sync — GitHub Actions
+
+In the repo: **Settings → Secrets and variables → Actions → New repository secret**. Add:
+
+```
+DATABASE_URL       <the same pooled Neon string>
+ALERT_WEBHOOK_URL  <your ntfy or Discord URL>
+PUBLIC_BASE_URL    https://<your-project>.vercel.app
+```
+
+Then **Actions → sync → Run workflow** to trigger the first run by hand. The first one takes
+longest, because it pulls the market list and trader histories from scratch. After that it runs
+itself every fifteen minutes.
+
+### 5. Point it at your wallet
+
+Open your Vercel URL, sign in with your password, go to **Settings**, and paste your Polymarket
+proxy wallet — the `0x…` from your profile URL, not your MetaMask address. Your bets import
+themselves from the next sync onward.
+
+### What this gives you
+
+HTTPS, reachable from your phone, password-protected, syncing every fifteen minutes, alerts
+pushed to your phone, and no server to maintain. No card anywhere.
+
+### The catches, stated plainly
+
+- **Scheduled workflows are disabled after 60 days without a commit.** GitHub does this to every
+  repo. Push anything, or trigger the workflow by hand, and the clock resets. If alerts go quiet
+  for a long stretch, check the Actions tab first.
+- **Cron timing is approximate.** Scheduled runs queue behind available runners and can be several
+  minutes late. Nothing here depends on exact timing, and the app raises its own alert if a sync
+  has not landed in three hours.
+- **Neon's free tier scales to zero** after inactivity. A sync every fifteen minutes keeps it warm,
+  so this only bites if syncing stops — in which case the first page load is slow while it wakes.
+- **Free tiers are policy, not contract.** All three could change. If they do, everything here runs
+  unchanged on your own machine with `npm run auto`.
 
 ## A free database, if you want it separate
 

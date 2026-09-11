@@ -1,0 +1,89 @@
+# Scheduled sync, run by GitHub Actions.
+#
+# This exists because the sync does not fit in a serverless function. A full pass has been
+# measured at seventeen minutes and a steady-state one at six to eight; Vercel's hobby functions
+# cap at sixty seconds. An Actions job can run for six hours, which is more headroom than this
+# will ever need.
+#
+# Cost: nothing. Actions is free with no minute cap on public repositories, and 2,000 minutes a
+# month on private ones — enough for roughly a two-hourly pass, but not a fifteen-minute one. If
+# the repo is private, widen the schedule below or the allowance runs out mid-month.
+#
+# No secret ever lives in this file. Everything comes from repository secrets, and the database
+# holds the data rather than the repo, so a public repo exposes the code and nothing else.
+name: sync
+
+on:
+  schedule:
+    # Every 15 minutes. GitHub does not guarantee punctuality — scheduled jobs queue behind
+    # available runners and can be several minutes late under load. That is fine here: nothing
+    # depends on an exact time, only on the data not going stale, and the app raises its own alert
+    # if a sync has not landed in three hours.
+    - cron: "*/15 * * * *"
+    # Once a day, which is what gates the discovery job below. Both jobs fire on this one; that is
+    # intended, since a discovery pass wants a fresh market list underneath it anyway.
+    - cron: "0 4 * * *"
+  # So a run can be triggered by hand from the Actions tab, which is also how you test the setup.
+  workflow_dispatch:
+
+# One pass at a time. A slow run must never have a second one start underneath it and open a
+# competing set of database connections — the same reasoning as the local `auto` loop measuring
+# its interval from the END of a pass.
+concurrency:
+  group: polyalpha-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    # Well above a normal pass, well below the six-hour ceiling, so a hung run fails visibly
+    # instead of burning the monthly allowance.
+    timeout-minutes: 40
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+      PUBLIC_BASE_URL: ${{ secrets.PUBLIC_BASE_URL }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # The embedded-postgres platform binaries only serve `npm run db:local`, which a scheduled
+      # sync never uses. Skipping them saves a large download on every run.
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund --omit=optional
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      # Idempotent, and it means a schema change ships with the next sync rather than needing a
+      # separate migration step against a database you cannot reach from your laptop.
+      - name: Apply schema
+        run: npx prisma db push --skip-generate --accept-data-loss
+
+      - name: Sync
+        run: npm run sync
+
+  # Discovery widens the watchlist and is expensive; it does not need to run every quarter hour.
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event.schedule == '0 4 * * *' || github.event_name == 'workflow_dispatch'
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund --omit=optional
+      - run: npx prisma generate
+      - run: npm run sync -- --only=discover
