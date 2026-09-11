@@ -48,11 +48,12 @@ on:
     # minutes, so frequent refreshes were never on offer, and the app raises its own alert if no
     # sync lands within three hours.
     #
-    # NOT split into two workflows on separate schedules, though that would allow fresher
-    # prices. Two workflows have independent concurrency groups, so they would overlap and
-    # contend for the same five-connection pooled database — which is precisely the failure that
-    # took the `opportunities` stage down. Keeping both steps serialised inside one job is what
-    # guarantees only one of them is ever talking to Postgres.
+    # NOT split into two workflows on separate schedules, though that would allow fresher prices.
+    # Separate workflows get independent concurrency groups, so they would overlap — and the
+    # stages are not safe to run concurrently against one database. `prune` deletes markets and
+    # activity while `markets` and `opportunities` are writing them, which is a race over the
+    # same rows rather than merely slower. (It is NOT a connection-pool problem: each runner is
+    # its own process with its own pool of five, and Neon's pooler is comfortable with that.)
     - cron: "0 * * * *"
     # Gates the maintenance job below.
     - cron: "0 4 * * *"
@@ -115,6 +116,23 @@ jobs:
       - name: Refresh prices and rescore
         timeout-minutes: 25
         run: npm run sync -- --only=markets,relink,scores,opportunities,bets,notify
+
+      # Retention, every pass rather than once a day, and BEFORE the expensive stage so a
+      # watchlist timeout cannot skip it.
+      #
+      # This used to live only in the daily `maintain` job, and that job cannot be relied on to
+      # run. Both crons fire at 04:00, so two runs enter the `polyalpha-sync` group; one starts
+      # and one goes pending, and GitHub cancels a pending run the moment a newer one queues —
+      # which the 05:00 run does. That is the same mechanism that cancelled two of the first four
+      # runs here after they sat for 21 and 40 minutes. Retention that only happens in a job
+      # liable to be cancelled is retention that does not happen, and DEPLOY.md is blunt about
+      # the consequence: an unbounded instance reached 3 GB in a day against a 0.5 GB cap.
+      #
+      # Cheap enough that hourly costs nothing — measured at 6.0 seconds against a database
+      # holding 383k rows, where a full pass is 42 minutes.
+      - name: Trim old rows
+        timeout-minutes: 5
+        run: npm run sync -- --only=prune
 
       # Expensive and incremental, so it comes last and is allowed to fail. Whatever it manages
       # this pass is picked up by the next one; whatever it does not, the previous pass already
