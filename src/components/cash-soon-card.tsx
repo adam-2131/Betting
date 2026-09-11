@@ -60,6 +60,7 @@ export function CashSoonCard({
   const midPrice = safeNumber(row.currentPrice);
   const retention = safeNumber(row.edgeRetention);
   const netEdge = safeNumber(row.netEdgePoints);
+  const winProbability = safeNumber(horizon?.estimatedWinProbability);
 
   // What the user's actual bankroll would return here, which is the only figure that is about
   // them rather than about the market.
@@ -114,7 +115,7 @@ export function CashSoonCard({
         </p>
       ) : null}
 
-      <div className="grid grid-cols-2 gap-x-6 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-x-6 sm:grid-cols-5">
         <KeyValue
           label="Settles in"
           value={formatTimeUntil(row.settlesAt)}
@@ -142,6 +143,18 @@ export function CashSoonCard({
           value={retention === null ? UNAVAILABLE : formatPercent(retention, 0)}
           hint="Survives the spread"
           tone={retentionTone(retention)}
+        />
+        <KeyValue
+          label="Chance of paying"
+          // The counterweight to the per-day headline: that figure is an average over outcomes,
+          // this is how often the average is actually collected.
+          value={winProbability === null ? UNAVAILABLE : formatPercent(winProbability, 0)}
+          hint={
+            winProbability === null
+              ? "Model estimate"
+              : `Loses the stake ${Math.round((1 - winProbability) * 100)}% of the time`
+          }
+          tone={winProbability !== null && winProbability < 0.4 ? "warning" : "neutral"}
         />
         <KeyValue
           label="Horizon score"

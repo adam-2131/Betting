@@ -36,6 +36,7 @@ export interface StoredHorizon {
   downsideReturnOnCapital: number | null;
   returnPerDay: number | null;
   upsideIfRight: number | null;
+  estimatedWinProbability: number | null;
   verdict: string;
 }
 

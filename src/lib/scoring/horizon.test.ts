@@ -212,6 +212,47 @@ describe("downside testing against the model's own uncertainty band", () => {
   });
 });
 
+describe("how often it actually pays, alongside how much", () => {
+  it("states the loss frequency when the position loses more often than it wins", () => {
+    // Verbatim from a live sync: a 15¢ college-football side the model marked up to 27¢, which
+    // computes to 44% per day. True, and worthless on its own — it loses everything 73% of the
+    // time, and the per-day figure alone reads as though it will not.
+    const result = computeHorizonScore(
+      input({
+        currentPrice: 0.15,
+        bestAsk: 0.16,
+        spread: 0.02,
+        modelMid: 0.2698,
+        modelLow: 0.1818,
+        endDate: new Date("2026-09-13T00:00:00Z"),
+      }),
+    );
+
+    expect(result.estimatedWinProbability).toBeCloseTo(0.2698, 6);
+    expect(result.returnPerDay as number).toBeGreaterThan(0.3);
+    expect(result.verdict).toContain("73% of the time");
+    expect(result.verdict).toContain("average over many such bets");
+  });
+
+  it("does not clutter the verdict when the position wins more often than not", () => {
+    const result = computeHorizonScore(input({ modelMid: 0.58, modelLow: 0.54 }));
+    expect(result.verdict).not.toContain("of the time");
+  });
+
+  it("penalises a longshot on the same threshold the rest of the app uses", () => {
+    // Return per day is edge / price, so a low price inflates it twice. A looser threshold here
+    // than risk.longshotPrice would hide exactly the positions this amplifies most.
+    expect(DEFAULT_SCORING_CONFIG.shortHorizon.longshotPrice).toBe(
+      DEFAULT_SCORING_CONFIG.risk.longshotPrice,
+    );
+
+    const result = computeHorizonScore(
+      input({ currentPrice: 0.12, bestAsk: 0.13, modelMid: 0.2, modelLow: 0.16 }),
+    );
+    expect(result.penalties.map((p) => p.key)).toContain("longshot");
+  });
+});
+
 describe("penalties and refusals", () => {
   it("penalises a missing resolution date instead of inventing a horizon", () => {
     const result = computeHorizonScore(input({ endDate: null, settlesAt: null }));

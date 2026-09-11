@@ -163,19 +163,41 @@ const GAME_DURATION_HOURS: Record<string, number> = {
   boxing: 1.5,
   f1: 2.0,
   cricket: 4.0,
+  // Esports carry real money — a single Counter-Strike playoff match showed $423k of liquidity —
+  // and they were the only upcoming fixtures a live sync could not match to a league. Durations
+  // assume the best-of-three and best-of-five formats Polymarket lists.
+  esports: 2.5,
+  "counter-strike-2": 2.5,
+  cs2: 2.5,
+  csgo: 2.5,
+  "league-of-legends": 3.0,
+  lol: 3.0,
+  dota2: 3.0,
+  valorant: 2.5,
 };
 
 /** Used when the league is unknown. Deliberately mid-range rather than optimistic. */
 export const DEFAULT_GAME_DURATION_HOURS = 3;
 
-/** League slug from a market's tags, or null when none of them name a league we know. */
+/**
+ * Umbrella tags that name a family of sports rather than a competition.
+ *
+ * Polymarket attaches these alongside the specific one — a League of Legends match carries
+ * `esports`, `games`, `sports` AND `league-of-legends` — so a first-match scan would settle on the
+ * umbrella and use its duration. Matched only after every specific league has been ruled out.
+ */
+const GENERIC_LEAGUE_TAGS = new Set(["esports", "soccer"]);
+
+/** League slug from a market's tags, preferring a specific competition over an umbrella tag. */
 export function leagueFromTags(tags: Array<string | null | undefined>): string | null {
-  for (const tag of tags) {
-    if (typeof tag !== "string") continue;
-    const slug = tag.trim().toLowerCase();
-    if (slug in GAME_DURATION_HOURS) return slug;
-  }
-  return null;
+  const slugs = tags
+    .filter((t): t is string => typeof t === "string")
+    .map((t) => t.trim().toLowerCase())
+    .filter((slug) => slug in GAME_DURATION_HOURS);
+
+  return (
+    slugs.find((slug) => !GENERIC_LEAGUE_TAGS.has(slug)) ?? slugs[0] ?? null
+  );
 }
 
 export function gameDurationHours(league: string | null | undefined): number {

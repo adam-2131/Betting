@@ -104,6 +104,17 @@ export interface HorizonResult extends ScoreResult {
   returnPerDay: number | null;
   /** Profit per dollar if the position simply wins. Not probability-weighted. */
   upsideIfRight: number | null;
+  /**
+   * The model's own estimated chance of being paid — which is just `modelMid`, named for what it
+   * means here.
+   *
+   * Reported separately from the return figures because they are different facts and the return
+   * figures alone are misleading without it. Expected return per day is an average over outcomes;
+   * this is how often the average is actually collected. A position can have an excellent expected
+   * return and still lose the entire stake most of the time, and on a board answering "what should
+   * I bet" that has to be said rather than left to be inferred from the price.
+   */
+  estimatedWinProbability: number | null;
   /** Plain-language summary of the trade-off, always populated. */
   verdict: string;
 }
@@ -418,6 +429,7 @@ export function computeHorizonScore(
     downsideReturnOnCapital,
     returnPerDay,
     upsideIfRight,
+    estimatedWinProbability: modelMid,
     verdict: buildVerdict({
       returnPerDay,
       downsideReturnOnCapital,
@@ -426,6 +438,7 @@ export function computeHorizonScore(
       realHours,
       capitalDaysFloored,
       effectivePrice,
+      estimatedWinProbability: modelMid,
     }),
   };
 }
@@ -466,6 +479,7 @@ function buildVerdict(input: {
   realHours: number | null;
   capitalDaysFloored: boolean;
   effectivePrice: number | null;
+  estimatedWinProbability: number | null;
 }): string {
   const { returnPerDay, downsideReturnOnCapital, netEdge, edgeRetention, realHours } = input;
 
@@ -491,11 +505,20 @@ function buildVerdict(input: {
     ? " Per-day figures are computed over a full day even though it settles sooner, since capital cannot realistically be redeployed faster than that."
     : "";
 
+  // Expected return is an average over outcomes; this is how often the average is collected. A
+  // position can earn 44% a day in expectation and still lose everything three times in four, and
+  // the per-day figure on its own reads as though it will not.
+  const win = input.estimatedWinProbability;
+  const lossWarning =
+    win !== null && win < 0.5
+      ? ` On the model's own estimate this still loses the entire stake about ${Math.round((1 - win) * 100)}% of the time — the return is an average over many such bets, not what to expect from this one.`
+      : "";
+
   if (downsideReturnOnCapital !== null && downsideReturnOnCapital > 0) {
-    return `Settles ${window} and earns about ${perDay} on the capital it ties up, still positive at the pessimistic end of the model's own range.${floored}`;
+    return `Settles ${window} and earns about ${perDay} on the capital it ties up, still positive at the pessimistic end of the model's own range.${lossWarning}${floored}`;
   }
 
-  return `Settles ${window} and earns about ${perDay} at the central estimate, but turns negative at the low end of the model's range — the edge depends on the estimate being close to right.${floored}`;
+  return `Settles ${window} and earns about ${perDay} at the central estimate, but turns negative at the low end of the model's range — the edge depends on the estimate being close to right.${lossWarning}${floored}`;
 }
 
 function describeWindow(hours: number): string {

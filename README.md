@@ -4,6 +4,17 @@ A read-only Polymarket research dashboard. It tracks wallets with strong histori
 measures how good those records actually are, finds markets where several of them agree, and ranks
 what is left by whether the trade still looks worth making **at today's price**.
 
+Three screens ask three different questions of the same data:
+
+| Screen | Question | Ranked by |
+| --- | --- | --- |
+| **Opportunities** | Is this signal worth acting on? | Signal quality, horizon-blind |
+| **Cash soon** | What pays out in the next few days? | Return per **day** of capital, priced at the ask |
+| **Sports** | What is on today, and who is on it? | Kickoff time, with the smart-money read per game |
+
+They disagree constantly, and that is the point — see
+[Why "cash soon" is a different question](#why-cash-soon-is-a-different-question).
+
 ## What it does not do
 
 This is the product's defining constraint, not a footnote:
@@ -72,7 +83,7 @@ So the normal way to run everything is three terminals:
 | `npm run sync -- --only=all` | Every stage, including holder discovery and the price backfill |
 | `npm run sync -- --only=opportunities` | Rescore from stored data without refetching |
 | `npm run sync -- --only=prices` | Backfill real CLOB price curves. Slow once, fast after |
-| `npm run sync -- --only=discover` | Widen the watchlist from the holders of busy markets |
+| `npm run sync -- --only=discover` | Widen the watchlist: top holders of busy markets **and** the live trade tape |
 | `npm run sync -- --markets=300 --traders=50` | Bound the work |
 | `npm run backtest -- --sweep` | **Start here.** Same analysis at six horizons, with a verdict |
 | `npm run backtest` | A single run, with confidence intervals and a significance test |
@@ -115,6 +126,74 @@ each weighted component and each applied penalty. The weights all live in one fi
 
 **Missing data reads as "Unavailable".** Never as zero, never as a dash, never invented. No `NaN`
 or `Infinity` reaches the interface.
+
+## Why "cash soon" is a different question
+
+The Opportunity Score is deliberately horizon-blind: it asks whether a signal is worth acting on,
+not how long your money is stuck. For "what should I bet right now that pays out this week" that is
+the wrong ranking, and not slightly — a 12-point edge settling in eight months earns about **0.05%
+a day**, while a 4-point edge settling on Sunday earns **4%**. The opportunity score ranks the
+first one higher, and it even applies a penalty to markets resolving within twelve hours, docking
+exactly the property a short-horizon search is looking for.
+
+`/cash-soon` ranks the same rows by return per day of capital instead, and makes three corrections
+the main score does not:
+
+**You buy at the ask, not the mid.** The model estimate is measured against the mid price, which is
+a fair value nobody can transact at. Over eight months that gap is rounding. Over three days it is
+usually the whole trade: a 2¢ spread on a 50¢ contract is 4% of your capital, and a 4% edge held
+for three days is 1.3% a day. Cross the spread and there is nothing left. Every price on this board
+is the ask plus a slippage allowance.
+
+**Edge is netted against execution before ranking**, not scored as a component that a strong
+consensus can outvote. Each row reports what fraction of the theoretical edge survives the spread,
+and rows where nothing survives are hidden by default — counted, with a toggle to show them.
+
+**The downside is tested.** The model publishes an uncertainty band that widens when few traders
+back a signal. This scores the low end of that band as well as the middle, so a position only rates
+highly if it stays positive when the model is wrong by the full width of its own admitted error.
+
+One deliberate distortion: the days-of-capital denominator is floored at one day. Unfloored, return
+per day diverges as the horizon shrinks — a 3% edge over two hours computes to 36% a day and every
+near-expiry market would pin the top of the list on arithmetic alone. A day is also the honest
+figure, since settlement, redemption and finding the next bet mean capital does not turn over
+faster than that.
+
+None of this makes a trade good. It makes two trades comparable.
+
+## Sports (`/sports`)
+
+Sports get their own screen because three things exist here and nowhere else in the product.
+
+**When a position was opened carries information.** In a politics market the same position taken in
+March or in September is the same opinion. In sports it is not: lineups, injuries and weather land
+in the final day, the closing line is the most accurate price a sports market ever shows, and money
+arriving late arrives *after* the information that decides the game. Each side reports how much of
+the tracked money landed inside that window.
+
+**The line moving away from a trader's entry is two facts at once.** "They bought at 45¢, it is 52¢
+now" is a worse entry for you — and also evidence their read was right. Those pull in opposite
+directions, and which one dominates depends on whether they are still buying. Crossing the price
+move with current flow separates four cases:
+
+| | Line moved **toward** them | Line moved **against** them |
+| --- | --- | --- |
+| **Still adding** | `STEAM` — market came round, they have not taken profit | `DOUBLING DOWN` — conviction, and a better entry than they got |
+| **Not adding** | `LINE CONFIRMED` — market agrees, but you pay up | `SMART MONEY EXITING` — the cheap price is cheap for a reason |
+
+That last cell is the one the entry-gap analysis alone cannot see: it looks like a discount and is
+actually the people whose record justifies the listing getting out.
+
+**Most sports markets cannot be traded at all.** A single NFL game carries around 380 markets, and
+one live four-game slate produced 834 across 35 market types. The great majority are auto-generated
+books sitting unquoted at 50/50 — one quarter-moneyline showed **$2.36** of liquidity behind a
+**96¢** spread, against the moneyline's **$208,000** behind **1¢**. They are filtered out by
+default, counted, and reachable with a toggle.
+
+Two more things the screen handles: `gameStartTime` is the only field that distinguishes a game
+from a season future (both are tagged `nfl`, both have an end date, but one frees your capital in
+three hours and the other in a year), and a market keeps trading *after* kickoff. PolyAlpha has no
+live score feed, so games already underway are flagged and hidden rather than ranked.
 
 ## Dividing up an amount (`/plan`)
 
@@ -255,17 +334,21 @@ scripts/                      db-local.ts (PostgreSQL), sync.ts, backtest.ts
 src/lib/polymarket/           API clients. types.ts mirrors the wire format exactly;
                               normalize.ts converts it into our own model. Nothing downstream
                               of normalize.ts ever sees an upstream field name.
+                              sports.ts holds the game/future split and the tradeability gate.
 src/lib/scoring/              Pure scoring functions. The clock is always an argument, which is
                               what lets the backtest replay them at a past date.
                               config.ts holds every weight and threshold.
+                              horizon.ts is the return-per-day ranking; sports.ts is the
+                              late-money and line-movement read.
 src/lib/backtest/engine.ts    Point-in-time replay. The header documents each look-ahead leak
                               and how it is closed.
 src/lib/sync/                 Fetch, normalize, diff, write. Skips unchanged rows.
+                              trader-selection.ts decides which wallets a pass can afford.
 src/lib/queries/              Read models for the pages.
 src/lib/allocation.ts         Splits a chosen sum across opportunities under the $1 order
                               minimum. A splitter, not an optimiser — the header says why.
-src/app/                      Next.js App Router: opportunities, plan, smart-money, traders,
-                              activity, backtest, settings.
+src/app/                      Next.js App Router: opportunities, cash-soon, sports, plan,
+                              smart-money, traders, activity, backtest, settings.
 src/components/               UI. primitives.tsx is the single source of "Unavailable" rendering.
 ```
 

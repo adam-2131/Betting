@@ -246,7 +246,15 @@ export interface ScoringConfig {
      * fact that the quoted best ask is for an unknown size and the true fill can be worse.
      */
     slippageAllowance: number;
-    /** Below this price the payout ratio is tail-dominated; treated as a longshot. */
+    /**
+     * Below this price a position is treated as a longshot.
+     *
+     * Matches `risk.longshotPrice` deliberately. Return per day is edge divided by price, so a low
+     * price inflates it twice over: the same two points of edge is 4% of capital at 50¢ and 25% at
+     * 8¢. That is arithmetically true and still not comparable, because the cheap version loses
+     * the whole stake far more often. Using a second, looser definition of "longshot" here than
+     * the rest of the app uses would hide exactly the positions this amplifies most.
+     */
     longshotPrice: number;
     longshotPenalty: number;
     /** Applied when the edge does not survive crossing the spread. */
@@ -429,14 +437,15 @@ export const DEFAULT_SCORING_CONFIG: ScoringConfig = {
     returnPerDayRange: [0, 0.1],
     liquidityRange: [500, 100_000],
     slippageAllowance: 0.01,
-    longshotPrice: 0.1,
-    longshotPenalty: 12,
     negativeNetEdgePenalty: 35,
     unknownHorizonPenalty: 25,
     thinBookUsd: 1_000,
     thinBookPenalty: 15,
     minQualifiedTraders: 2,
     insufficientSamplePenalty: 15,
+    // Same figure as risk.longshotPrice; see the interface comment for why they must agree.
+    longshotPrice: 0.15,
+    longshotPenalty: 12,
   },
 
   sports: {

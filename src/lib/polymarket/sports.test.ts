@@ -124,6 +124,22 @@ describe("league and settlement estimation", () => {
     expect(leagueFromTags([])).toBeNull();
   });
 
+  it("prefers the specific competition over the umbrella tag", () => {
+    // Verbatim tag set from a live esports market. `esports` comes first in the list and is also
+    // a known league, so a first-match scan would take its 2.5h instead of LoL's 3h.
+    expect(leagueFromTags(["esports", "games", "sports", "league-of-legends"])).toBe(
+      "league-of-legends",
+    );
+    expect(leagueFromTags(["esports", "games", "sports", "counter-strike-2"])).toBe(
+      "counter-strike-2",
+    );
+    expect(leagueFromTags(["soccer", "sports", "epl"])).toBe("epl");
+  });
+
+  it("falls back to the umbrella tag when no specific league is present", () => {
+    expect(leagueFromTags(["esports", "games", "sports"])).toBe("esports");
+  });
+
   it("falls back to a mid-range duration for an unknown league", () => {
     expect(gameDurationHours("nfl")).toBe(3.2);
     expect(gameDurationHours("kabaddi")).toBe(3);
