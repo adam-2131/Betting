@@ -63,7 +63,7 @@ Public, unauthenticated, keyless. This is the smart-money core.
 | `GET /value?user=` | Portfolio value | `[{ user, value }]` |
 | `GET /traded?user=` | Lifetime trade count | `{ user, traded }` |
 | `GET /holders?market=<conditionId>` | Top holders per outcome token — our **trader discovery** mechanism | `token, holders[{ proxyWallet, name, pseudonym, amount, outcomeIndex, bio, profileImage, verified }]` |
-| `GET /trades` | Global trade tape (optionally `?user=` / `?market=`) | same shape as activity `TRADE` rows |
+| `GET /trades` | Global trade tape (optionally `?user=` / `?market=`) — our **third discovery** source | same shape as activity `TRADE` rows. Pages by `offset` with no overlap between pages; each fill appears **twice**, once per counterparty |
 | `GET /v1/leaderboard` | All-time PnL/volume ranking — our **seed discovery** source | `[{ rank, proxyWallet, userName, xUsername, verifiedBadge, vol, pnl, profileImage }]` |
 
 Pagination is `limit` / `offset`, and the ceilings differ per endpoint — measured, not documented:
@@ -148,6 +148,54 @@ which a backtest would then try to evaluate from a signal time that has not occu
 is clamped to `min(endDate, now)` and treated as an upper bound on when resolution occurred, and
 the backtest additionally skips any signal time that is not yet in the past.
 
+**`bestBid` and `bestAsk` describe outcome 0 only, not the market.** Gamma reports a single quote
+pair per market with no indication of which outcome it belongs to. On the Bills/Texans moneyline —
+outcomes `["Bills","Texans"]` priced `["0.525","0.475"]` — it returned `bestBid: 0.52`,
+`bestAsk: 0.53`, whose midpoint is exactly `outcomePrices[0]`. Confirmed on five further live
+markets across four sports during a full sync; the midpoint matched `prices[0]` every time.
+
+This only became load-bearing once the short-horizon ranking started pricing entries at the ask
+rather than the mid. Reading that ask as the cost of the *second* outcome buys the wrong side at
+the wrong price — and silently, since the number is plausible. `quotesForOutcome` derives the
+other side from the CTF identity instead: complementary shares sum to $1, so `ask(1) = 1 − bid(0)`
+and `bid(1) = 1 − ask(0)`. That preserves the spread, which is the arithmetic check that it is
+right. Markets with more than two outcomes return no quote rather than a guess, because one pair
+cannot describe a negative-risk event with many legs.
+
+**`gameStartTime` is sports-only, game-only, and not ISO 8601.** It appears exclusively on sports
+markets and, within those, only on game-level ones — season futures omit it. That makes its
+presence the only reliable way to tell "Bills vs. Texans on Sunday" from "Pro Football: 2027
+Champion", since both are tagged `nfl`, both land in `Category.SPORTS`, and both carry an
+`endDate`. One frees capital in three hours, the other in a year.
+
+The format is `"2026-09-13 17:00:00+00"`: a space instead of `T`, and a two-digit offset instead of
+`±HH:MM`. Neither is valid ECMAScript date-time grammar, so V8 parses it by implementation-specific
+fallback. The dangerous case is the offset going missing — `new Date("2026-09-13 17:00:00")` is
+read in the *host* timezone, which shifted kickoff by two hours on a UTC+2 machine. Every figure
+the short-horizon ranking produces is a function of hours-until-settlement, so that skews results
+rather than failing visibly. `parseGameStartTime` normalizes the shape and treats a missing offset
+as UTC.
+
+Note also that on a game market `endDate` *equals* `gameStartTime`, so it marks kickoff rather than
+settlement. Treating it as the moment capital returns understates the hold by the length of the
+game.
+
+**Most sports markets are unquoted placeholders.** A single NFL game carries around 380 markets,
+and one live four-game slate produced 834 across 35 distinct `sportsMarketType` values. The
+great majority are auto-generated and sit at 50/50 with no real book behind them:
+
+| `sportsMarketType` | Liquidity | Spread |
+| --- | --- | --- |
+| `moneyline` | $208,268 | 1¢ |
+| `spreads` | $70,198 | 1¢ |
+| `totals` | $15,124 | 2¢ |
+| `q2_moneyline` | $2.36 | 96¢ |
+| `second_half_totals` | $1.08 | 99¢ |
+
+The market type is only a prior on this, not a decision — `second_half_totals` is nominally a
+derivative of a real market and was quoted at $1.08. The gate in `polymarket/sports.ts` therefore
+reads live liquidity and spread, and the type map only labels and orders whatever survives.
+
 ---
 
 ## 2. System shape
@@ -228,12 +276,31 @@ the backtest additionally skips any signal time that is not yet in the past.
 | Stage | Default cadence | What it does |
 | --- | --- | --- |
 | `markets` | 10 min | Pull active events + nested markets, upsert `Market`, write a `MarketSnapshot` **only when price/liquidity moved past a threshold** |
-| `traders` | 15 min | For each active tracked trader: `/positions`, `/closed-positions`, `/activity` (incremental via `start=` last seen), `/value`, `/traded` |
+| `traders` | 15 min | For the wallets this pass can afford: `/positions`, `/closed-positions`, `/activity` (incremental via `start=` last seen), `/value`, `/traded` |
 | `scores` | after `traders` | Recompute `TraderPerformance`, `TraderMarketPerformance`, behaviour classification, Smart Trader Score |
 | `opportunities` | after both | Recompute consensus + opportunity scores, emit `Signal` rows and activity-feed events |
 
 Snapshots are deduplicated: a new `MarketSnapshot` is only written when price moves ≥ 0.5¢, liquidity
 moves ≥ 5%, or 6h have elapsed. Same idea for `PositionSnapshot` (≥ 2% size change or 6h).
+
+**The trader stage spends a budget, it does not walk the watchlist.** Sync cost would otherwise grow
+linearly with the number of wallets tracked while the useful signal does not — a wallet that last
+traded in March returns the same positions this hour as last hour and costs the same to read as one
+trading now. `src/lib/sync/trader-selection.ts` tiers wallets by how likely a refresh is to change
+anything, gives each tier its own refresh interval and history depth, and rotates by staleness
+within a tier. A live pass over a 443-wallet watchlist synced 160 and correctly deferred 271.
+
+A reserved share of the budget is held for never-synced wallets. Sorting purely by tier fails in
+both directions: 500 hot wallets against a budget of 200 means discoveries are never read, while
+3,000 new wallets means the traders actually producing signals go stale. The reservation is a floor
+against the first and a ceiling against the second, released back when known wallets cannot fill it.
+
+Wallets are synced with bounded concurrency. The previous implementation was sequential on the
+reasoning that the HTTP layer already parallelises — it does, but only *within* one wallet across
+the five endpoints fetched together. The expensive part is `/closed-positions`, which pages fifty
+rows at a time and walks them serially, and during that walk the per-host token bucket sits idle
+while the whole watchlist queues. Concurrency fills that gap; it does not raise the request rate,
+which the bucket still governs centrally, and in practice the bucket becomes the binding constraint.
 
 For deployments, `POST /api/cron/sync` does the same work, guarded by a `CRON_SECRET` bearer token,
 compatible with Vercel Cron / GitHub Actions.
@@ -242,7 +309,7 @@ compatible with Vercel Cron / GitHub Actions.
 
 ## 4. Scoring philosophy
 
-Three transparent 0–100 scores, all computed from measurable inputs, all showing their components and
+Four transparent 0–100 scores, all computed from measurable inputs, all showing their components and
 penalties in the UI. **No LLM produces a number anywhere in this application.**
 
 1. **Smart Trader Score** — how good is this wallet? (`src/lib/scoring/trader-score.ts`)
@@ -250,6 +317,21 @@ penalties in the UI. **No LLM produces a number anywhere in this application.**
    (`src/lib/scoring/consensus.ts`)
 3. **Opportunity Score** — is this still a good trade *at today's price*?
    (`src/lib/scoring/opportunity.ts`)
+4. **Short-Horizon Score** — how much does a dollar earn *per day it stays locked up*?
+   (`src/lib/scoring/horizon.ts`)
+
+The fourth exists because the third is deliberately horizon-blind, and the gap between them is not
+cosmetic. A twelve-point edge settling in eight months earns about 0.05% a day; a four-point edge
+settling on Sunday earns 4%. The Opportunity Score ranks the first higher, and applies
+`shortTimeRemainingPenalty` to anything resolving within twelve hours — docking exactly the property
+a short-horizon search is looking for. On live data the two rankings shared only 4 of their top 10.
+
+The short-horizon score also makes a correction the other three do not need to: it prices entries at
+the **ask**, not the mid. Over eight months the spread is rounding; over three days a 2¢ spread on a
+50¢ contract is 4% of capital against a 4% edge. It reports what fraction of the theoretical edge
+survives execution, scores the *low* end of the model's uncertainty band alongside the middle, and
+publishes the model's estimated chance of being paid next to the return — because expected return is
+an average over outcomes and says nothing about how often that average is collected.
 
 Every weight, threshold and penalty lives in **one file**: `src/lib/scoring/config.ts`, overridable via
 `AppSettings` in the database and editable from the Settings page.

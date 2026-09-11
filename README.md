@@ -309,10 +309,24 @@ Affected traders are flagged as `TRUNCATED`, because their totals are lower boun
 
 **Watchlist survivorship.** The original 50 wallets all came from `/v1/leaderboard`, which ranks
 by all-time realised profit — so they were chosen *because they won*. Replaying their trades and
-finding the trades did well would prove very little. `npm run sync -- --only=discover` widens the
-list by sampling the largest holders of the highest-volume markets instead; volume is a property
-of the market, not of the wallet's record, so that selection is outcome-independent. It is still
-biased toward large wallets rather than good ones, which is a much weaker bias but not none. Each
+finding the trades did well would prove very little.
+
+`npm run sync -- --only=discover` widens the list from two further directions, each with a
+different bias, which is the point of running both:
+
+- **Top holders of the highest-volume markets.** Volume is a property of the market, not of the
+  wallet's record, so the selection is outcome-independent. It is still biased toward *large*
+  wallets rather than good ones — a much weaker bias, but not none.
+- **The live trade tape.** Neither of the other two ever returns a wallet that is simply trading a
+  lot right now, and for markets resolving this week that is the population that matters: whoever
+  is active in a market settling on Sunday is expressing a view about Sunday, while a large holder
+  may have taken their position months ago. The tape's own bias runs the opposite way — it
+  over-samples *high-frequency* wallets, so market makers and bots surface first. A wallet must
+  appear across several distinct markets to be added, which on a live run rejected 159 of 199
+  candidates as single-market grinders.
+
+So the honest description of the watchlist is "leaderboard winners, large holders, and
+currently-active traders" — broader than any one source and still not a neutral sample. Each
 trader records which route it arrived by.
 
 See `DATA_MODEL.md` §1.5 for the full list, including two upstream field names that mean something
