@@ -54,7 +54,18 @@ export interface ConsensusMarketContext {
 export interface ConsensusResult extends ScoreResult {
   traderCount: number;
   qualifiedTraderCount: number;
+  /**
+   * Every tracked wallet on the other side, regardless of quality.
+   *
+   * Do NOT display this next to `qualifiedTraderCount` as though the two were a pair. One is
+   * filtered by Smart Trader Score and the other is not, so putting them side by side makes any
+   * position look far more contested than the score treats it — a Fed market read "2 for, 13
+   * against" when the like-for-like figure was much closer. Use
+   * `qualifiedOpposingTraderCount` for anything comparative; this one is a raw total.
+   */
   opposingTraderCount: number;
+  /** Opposing wallets that clear the same quality bar as `qualifiedTraderCount`. */
+  qualifiedOpposingTraderCount: number;
   exposureUsd: number;
   opposingExposureUsd: number;
   weightedEntryPrice: number | null;
@@ -164,6 +175,7 @@ export function computeConsensus(
       traderCount: 0,
       qualifiedTraderCount: 0,
       opposingTraderCount: uniqueOpposing.length,
+      qualifiedOpposingTraderCount: qualifiedOpposing.length,
       exposureUsd: 0,
       opposingExposureUsd,
       weightedEntryPrice: null,
@@ -373,6 +385,7 @@ export function computeConsensus(
     traderCount: unique.length,
     qualifiedTraderCount: qualified.length,
     opposingTraderCount: uniqueOpposing.length,
+    qualifiedOpposingTraderCount: qualifiedOpposing.length,
     exposureUsd,
     opposingExposureUsd,
     weightedEntryPrice: weightedEntry,

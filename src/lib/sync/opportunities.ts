@@ -453,6 +453,7 @@ function opportunityData(
     consensusScore: consensus.score,
     qualifiedTraders: consensus.qualifiedTraderCount,
     opposingTraders: consensus.opposingTraderCount,
+    qualifiedOpposingTraders: consensus.qualifiedOpposingTraderCount,
     modelEstimateLow: opportunity.modelEstimate.low,
     modelEstimateMid: opportunity.modelEstimate.mid,
     modelEstimateHigh: opportunity.modelEstimate.high,

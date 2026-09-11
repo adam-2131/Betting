@@ -602,7 +602,12 @@ model Opportunity {
   entryGap           Float?
   consensusScore     Float?
   qualifiedTraders   Int    @default(0)
+  /// Every tracked wallet on the other side, unfiltered by quality. Not comparable with
+  /// `qualifiedTraders` — see `qualifiedOpposingTraders` for the like-for-like count.
   opposingTraders    Int    @default(0)
+  /// Opposing wallets clearing the same Smart Trader Score bar as `qualifiedTraders`. This is the
+  /// one the UI shows, because it is the comparison the score itself makes.
+  qualifiedOpposingTraders Int @default(0)
 
   // MODEL ESTIMATE — a quantitative range, never a claim of true probability.
   modelEstimateLow  Float?

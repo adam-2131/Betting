@@ -152,7 +152,7 @@ export default async function OpportunityDetailPage({
                 ? UNAVAILABLE
                 : Math.round(opportunity.consensusScore)
             }
-            sublabel={`${intPlain(opportunity.qualifiedTraders)} qualified · ${intPlain(opportunity.opposingTraders)} opposing`}
+            sublabel={`${intPlain(opportunity.qualifiedTraders)} qualified · ${intPlain(opportunity.qualifiedOpposingTraders)} qualified opposing · ${intPlain(opportunity.opposingTraders)} on the other side in total`}
           />
         </Card>
         <Card>

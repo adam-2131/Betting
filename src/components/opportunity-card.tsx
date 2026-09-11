@@ -205,7 +205,7 @@ export function OpportunityCard({
     trackedEntry: safeNumber(opportunity.weightedEliteEntry),
     entryGap: safeNumber(opportunity.entryGap),
     qualifiedTraders: opportunity.qualifiedTraders,
-    opposingTraders: opportunity.opposingTraders,
+    opposingTraders: opportunity.qualifiedOpposingTraders,
     bankroll,
   });
 
@@ -281,9 +281,11 @@ export function OpportunityCard({
           label="Traders"
           value={opportunity.qualifiedTraders}
           hint={
-            opportunity.opposingTraders > 0
-              ? `${opportunity.opposingTraders} on the other side`
-              : "Qualified holders"
+            // Deliberately the *qualified* opposing count. Pairing the quality-filtered figure
+            // with the unfiltered total made positions look contested when they were not.
+            opportunity.qualifiedOpposingTraders > 0
+              ? `${opportunity.qualifiedOpposingTraders} qualified on the other side`
+              : "Qualified holders, none opposing"
           }
         />
         <KeyValue label="Tracked entry" value={formatCents(opportunity.weightedEliteEntry)} />
