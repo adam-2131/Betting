@@ -27,18 +27,33 @@ name: sync
 
 on:
   schedule:
-    # Every thirty minutes, because that is longer than a pass takes. A measured healthy run is
-    # 26.6 minutes — 14 in the pricing and scoring step, 12.2 in the watchlist step — and the
-    # schedule was every fifteen. Since `cancel-in-progress` is false, each pass was still
-    # running when the next was due, so runs queued and fell further behind; two of the first
-    # four were cancelled after sitting for 21 and 40 minutes. A schedule shorter than the work
-    # it triggers does not sync more often, it just builds a backlog.
+    # Hourly, because that is the only interval longer than a pass is ALLOWED to take.
     #
-    # Freshness costs nothing here: the board step alone takes 14 minutes, so a quarter-hourly
-    # refresh was never achievable, and the app raises its own alert if no sync lands in three
-    # hours. If this ever needs to be genuinely frequent, the answer is two workflows — the cheap
-    # board refresh on its own schedule and the watchlist on a slower one — not a tighter cron.
-    - cron: "*/30 * * * *"
+    # This was every fifteen minutes, and since `cancel-in-progress` is false each pass was
+    # still running when the next fell due, so runs queued instead of replacing each other and
+    # drifted further behind — two of the first four were cancelled after sitting for 21 and 40
+    # minutes. A schedule shorter than the work it triggers does not sync more often, it builds
+    # a backlog.
+    #
+    # It was then briefly every thirty, on the strength of one 26.6-minute run. That was a
+    # mistake worth recording: the very next pass took 42.3 minutes (23.5 board, 18.1
+    # watchlist). Nothing regressed — the first run was fast because the database was nearly
+    # empty, and `markets` re-prices every market it knows about, so a pass gets slower as the
+    # board fills. Calibrating a schedule against an observed duration is calibrating against
+    # however much data happened to exist that day.
+    #
+    # So this is set against the ceiling instead, which does not drift: 25 minutes for the board
+    # step plus 20 for the watchlist plus setup is ~45, and the job itself is capped at 50. Only
+    # an hourly schedule clears that, and it costs nothing — the board step alone runs 14-24
+    # minutes, so frequent refreshes were never on offer, and the app raises its own alert if no
+    # sync lands within three hours.
+    #
+    # NOT split into two workflows on separate schedules, though that would allow fresher
+    # prices. Two workflows have independent concurrency groups, so they would overlap and
+    # contend for the same five-connection pooled database — which is precisely the failure that
+    # took the `opportunities` stage down. Keeping both steps serialised inside one job is what
+    # guarantees only one of them is ever talking to Postgres.
+    - cron: "0 * * * *"
     # Gates the maintenance job below.
     - cron: "0 4 * * *"
   workflow_dispatch:
