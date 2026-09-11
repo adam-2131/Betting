@@ -219,6 +219,58 @@ describe("computeModelEstimate", () => {
     expect(estimate.edgePoints).toBeNull();
   });
 
+  it("moves DOWN when the consensus is below neutral, not only up", () => {
+    // THE DEFECT THIS REPLACED. The shift was clamped at zero, so the estimate could only ever
+    // rise and every side examined came back underpriced — on live data, 97 of 97 positive-edge
+    // sides claimed the outcome was likelier than the market said and none claimed the reverse.
+    // Both sides of a binary market cannot be cheap.
+    const weak = { ...strongConsensus(), score: 25 };
+    const estimate = computeModelEstimate(0.42, weak);
+    expect(estimate.mid!).toBeLessThan(0.42);
+    expect(estimate.edgePoints!).toBeLessThan(0);
+  });
+
+  it("leaves the price alone when the consensus is neutral", () => {
+    const neutral = { ...strongConsensus(), score: 50 };
+    expect(computeModelEstimate(0.42, neutral).mid!).toBeCloseTo(0.42, 10);
+  });
+
+  it("scales by the headroom in the direction it is moving", () => {
+    // The old code always scaled by (1 − price), which handed the biggest markups to the cheapest
+    // outcomes — and returnPerDay then divided by price and amplified it again. 44% of
+    // positive-edge picks sat under 30¢ and not one was above 70¢.
+    const strong = { ...strongConsensus(), score: 90 };
+    const cheapUp = computeModelEstimate(0.1, strong).mid! - 0.1;
+    const dearUp = computeModelEstimate(0.9, strong).mid! - 0.9;
+    // Upward room really is larger at a low price, so this asymmetry is correct...
+    expect(cheapUp).toBeGreaterThan(dearUp);
+
+    // ...and it must reverse on the way down, which is what removes the net longshot bias.
+    const weak = { ...strongConsensus(), score: 10 };
+    const cheapDown = 0.1 - computeModelEstimate(0.1, weak).mid!;
+    const dearDown = 0.9 - computeModelEstimate(0.9, weak).mid!;
+    expect(dearDown).toBeGreaterThan(cheapDown);
+  });
+
+  it("respects the hard cap in both directions", () => {
+    const strong = { ...strongConsensus(), score: 100 };
+    const weak = { ...strongConsensus(), score: 0 };
+    expect(computeModelEstimate(0.5, strong).mid! - 0.5).toBeLessThanOrEqual(0.12 + 1e-9);
+    expect(0.5 - computeModelEstimate(0.5, weak).mid!).toBeLessThanOrEqual(0.12 + 1e-9);
+  });
+
+  it("never leaves the 1c..99c band even at the extremes", () => {
+    const weak = { ...strongConsensus(), score: 0 };
+    const strong = { ...strongConsensus(), score: 100 };
+    for (const price of [0.02, 0.5, 0.98]) {
+      for (const consensus of [weak, strong]) {
+        const mid = computeModelEstimate(price, consensus).mid!;
+        expect(mid).toBeGreaterThanOrEqual(0.01);
+        expect(mid).toBeLessThanOrEqual(0.99);
+      }
+    }
+  });
+
   it("declines to estimate at unusable prices", () => {
     for (const price of [0, 1, null, NaN]) {
       expect(computeModelEstimate(price, strongConsensus()).mid).toBeNull();

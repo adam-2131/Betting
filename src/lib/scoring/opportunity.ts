@@ -127,10 +127,35 @@ export function computeModelEstimate(
     };
   }
 
-  // Consensus strength above the neutral midpoint drives the size of the shift.
-  const strength = Math.max(0, (consensus.score - 50) / 50); // 0..1
-  const rawShift = strength * cfg.maxShiftFraction * (1 - price);
-  const shift = Math.min(rawShift, cfg.maxShiftAbsolute);
+  /**
+   * Signed distance of the consensus from neutral, −1..+1.
+   *
+   * THIS USED TO BE CLAMPED AT ZERO, and that was a real defect rather than a conservative
+   * choice. With `Math.max(0, …)` the estimate could only ever move UP, so every side the model
+   * looked at came back underpriced — measured on live data, 97 of 97 sides with a positive edge
+   * had the model claiming the outcome was more likely than the market said, and not one claimed
+   * it was less likely. On a two-sided market that is incoherent: both sides cannot be cheap.
+   *
+   * A side is only listed at all once a qualified trader holds it, so a consensus BELOW neutral is
+   * not absence of evidence — it is agreement that is weak, opposed, stale, or coming from wallets
+   * that look automated. That is mild evidence against, and the estimate should be allowed to say
+   * so.
+   */
+  const strength = (consensus.score - 50) / 50;
+
+  /**
+   * Room available in the direction of travel.
+   *
+   * Moving up, the distance to certainty is `1 − price`; moving down, it is `price`. The old code
+   * used `1 − price` unconditionally, which handed the largest markups to the cheapest outcomes
+   * and then `returnPerDay` divided by price and amplified it again. The result was a systematic
+   * preference for longshots: 44% of positive-edge picks sat under 30¢ and not one was above 70¢.
+   * Scaling by the correct side's headroom removes that bias rather than penalising it after the
+   * fact.
+   */
+  const headroom = strength >= 0 ? 1 - price : price;
+  const rawShift = Math.abs(strength) * cfg.maxShiftFraction * headroom;
+  const shift = Math.sign(strength) * Math.min(rawShift, cfg.maxShiftAbsolute);
 
   const mid = Math.max(0.01, Math.min(0.99, price + shift));
 
