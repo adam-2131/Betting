@@ -5,7 +5,7 @@
  * badges, and ranks the result. This is where "who is holding what" becomes "is this still worth
  * looking at today".
  */
-import { SignalTone, SignalType, type Category } from "@prisma/client";
+import { Prisma, SignalTone, SignalType, type Category } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { getSettingsBundle } from "@/lib/settings";
 import { safeNumber } from "@/lib/num";
@@ -391,17 +391,32 @@ export async function syncOpportunities(): Promise<OpportunitySyncStats> {
   return stats;
 }
 
-/** Assigns dense ranks by score so the UI can show "#1 OPPORTUNITY". */
+/**
+ * Assigns dense ranks by score so the UI can show "#1 OPPORTUNITY".
+ *
+ * One statement, not one per row. The previous version read every id and then fired an `update`
+ * for each inside a single `Promise.all`, which is as many concurrent queries as there are
+ * opportunities — over two thousand on a local database. A local Postgres absorbs that; a pooled
+ * hosted one does not, and the hosted sync died here with `Timed out fetching a new connection
+ * from the connection pool (connection limit: 5)`. Because ranking is the last thing
+ * `syncOpportunities` does, failing here discarded the whole scoring pass and left the board
+ * empty. Ranking is a job the database can do by itself, so it now does.
+ *
+ * `id` breaks ties, which the old version left to whatever order the rows came back in. Equal
+ * scores now rank the same way on every pass instead of shuffling between them.
+ */
 export async function rankOpportunities(): Promise<void> {
-  const rows = await prisma.opportunity.findMany({
-    orderBy: { score: "desc" },
-    select: { id: true },
-  });
-  await Promise.all(
-    rows.map((row, index) =>
-      prisma.opportunity.update({ where: { id: row.id }, data: { rank: index + 1 } }),
-    ),
-  );
+  await prisma.$executeRaw(Prisma.sql`
+    UPDATE "Opportunity" o
+    SET "rank" = ranked.position
+    FROM (
+      SELECT id, ROW_NUMBER() OVER (ORDER BY "score" DESC, id ASC) AS position
+      FROM "Opportunity"
+    ) ranked
+    WHERE o.id = ranked.id
+      -- Skip rows already holding the right rank, so a pass that changes nothing writes nothing.
+      AND (o."rank" IS NULL OR o."rank" <> ranked.position)
+  `);
 }
 
 function consensusData(marketId: string, outcomeIndex: number, consensus: ConsensusResult) {
