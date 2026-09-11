@@ -145,7 +145,20 @@ export async function fetchLeaderboard(limit = 50): Promise<DataLeaderboardEntry
  * wallets get both sides of every trade, which is what trader discovery wants.
  */
 export async function fetchTrades(
-  options: { user?: string; market?: string; limit?: number; offset?: number } = {},
+  options: {
+    user?: string;
+    market?: string;
+    limit?: number;
+    offset?: number;
+    /**
+     * VERIFIED: with this off, 20 rows of a live market contained 11 duplicate transaction
+     * hashes — both counterparties to the same fill. With it on, zero. Only the taker chose to
+     * trade at that moment, so aggression analysis wants `true` while wallet discovery, which
+     * benefits from seeing both sides, wants `false`.
+     */
+    takerOnly?: boolean;
+    ttlMs?: number;
+  } = {},
 ): Promise<DataTrade[]> {
   const result = await apiGet<DataTrade[] | null>("data", "/trades", {
     params: {
@@ -153,9 +166,9 @@ export async function fetchTrades(
       market: options.market,
       limit: options.limit ?? 100,
       offset: options.offset,
-      takerOnly: false,
+      takerOnly: options.takerOnly ?? false,
     },
-    ttlMs: TTL.activity,
+    ttlMs: options.ttlMs ?? TTL.activity,
   });
   return Array.isArray(result) ? result : [];
 }

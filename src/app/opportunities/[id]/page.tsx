@@ -34,6 +34,7 @@ import { ScoreBreakdown } from "@/components/ui/score-breakdown";
 import { SignalBadgeList } from "@/components/ui/signal-badge";
 import { ViewOnPolymarket } from "@/components/ui/view-on-polymarket";
 import { PayoutCalculator } from "@/components/payout-calculator";
+import { AnalyzePanel } from "@/components/analyze-panel";
 
 export const dynamic = "force-dynamic";
 
@@ -166,6 +167,9 @@ export default async function OpportunityDetailPage({
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,24rem)]">
         <div className="space-y-4">
+          {/* First on the page, because everything below it is a cached snapshot and this is not. */}
+          <AnalyzePanel opportunityId={opportunity.id} />
+
           {reasonsFor.length > 0 || reasonsAgainst.length > 0 ? (
             <div className="grid gap-4 sm:grid-cols-2">
               <Card>
