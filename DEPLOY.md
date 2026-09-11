@@ -98,6 +98,23 @@ ALERT_WEBHOOK_URL  <your ntfy or Discord URL>
 PUBLIC_BASE_URL    https://<your-project>.vercel.app
 ```
 
+Also add these, as repository **variables** rather than secrets (they are not sensitive, and
+variables are visible in the workflow log which makes debugging easier):
+
+```
+RETAIN_ACTIVITY_DAYS         21
+RETAIN_SNAPSHOT_DAYS         14
+RETAIN_RESOLVED_MARKET_DAYS  14
+MAX_WATCHLIST                200
+SYNC_MARKET_LIMIT            250
+SYNC_TRADER_LIMIT            60
+```
+
+**These are not optional on a free tier.** Without them the database grows without limit — a local
+instance reached 3 GB in a day, of which activity alone was 2 GB, against a 0.5 GB cap. With them
+it settles around 200 MB. The trade is shallower history on wallets that stopped trading, which is
+the least useful data here.
+
 Then **Actions → sync → Run workflow** to trigger the first run by hand. The first one takes
 longest, because it pulls the market list and trader histories from scratch. After that it runs
 itself every fifteen minutes.

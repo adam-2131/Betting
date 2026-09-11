@@ -45,6 +45,18 @@ jobs:
       ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
       PUBLIC_BASE_URL: ${{ secrets.PUBLIC_BASE_URL }}
 
+      # Retention and sync limits. Repository VARIABLES rather than secrets, since none of them is
+      # sensitive and a variable shows up in the run log, which makes a misconfiguration visible
+      # rather than mysterious. The fallbacks after `||` mean the workflow is correct out of the
+      # box: without them a free-tier database fills up, since an unbounded instance reached 3 GB
+      # in a day against a 0.5 GB cap.
+      RETAIN_ACTIVITY_DAYS: ${{ vars.RETAIN_ACTIVITY_DAYS || '21' }}
+      RETAIN_SNAPSHOT_DAYS: ${{ vars.RETAIN_SNAPSHOT_DAYS || '14' }}
+      RETAIN_RESOLVED_MARKET_DAYS: ${{ vars.RETAIN_RESOLVED_MARKET_DAYS || '14' }}
+      MAX_WATCHLIST: ${{ vars.MAX_WATCHLIST || '200' }}
+      SYNC_MARKET_LIMIT: ${{ vars.SYNC_MARKET_LIMIT || '250' }}
+      SYNC_TRADER_LIMIT: ${{ vars.SYNC_TRADER_LIMIT || '60' }}
+
     steps:
       - uses: actions/checkout@v4
 
