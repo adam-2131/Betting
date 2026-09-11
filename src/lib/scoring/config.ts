@@ -260,6 +260,28 @@ export interface ScoringConfig {
     minQualifiedTraders: number;
     insufficientSamplePenalty: number;
   };
+
+  /**
+   * SPORTS-SPECIFIC thresholds. See `scoring/sports.ts` for why sports needs its own treatment
+   * rather than being just another category filter.
+   */
+  sports: {
+    /**
+     * Hours before kickoff inside which money is treated as "late".
+     *
+     * Sports markets are the one place where WHEN a position was opened carries information
+     * independent of who opened it. Lineups, injuries and weather land in the final day, and the
+     * closing line is the most accurate price a sports market ever shows. A position taken a week
+     * out was taken without most of the information that ends up mattering.
+     */
+    lateMoneyWindowHours: number;
+    /** Price move, in probability points, below which the line is treated as unchanged. */
+    flatLineThresholdPoints: number;
+    /** Hours to kickoff below which a game counts as imminent. */
+    imminentHours: number;
+    /** Hours to kickoff above which the line is still soft and low-information. */
+    earlyHours: number;
+  };
 }
 
 export const DEFAULT_SCORING_CONFIG: ScoringConfig = {
@@ -415,6 +437,14 @@ export const DEFAULT_SCORING_CONFIG: ScoringConfig = {
     thinBookPenalty: 15,
     minQualifiedTraders: 2,
     insufficientSamplePenalty: 15,
+  },
+
+  sports: {
+    lateMoneyWindowHours: 24,
+    // Below half a cent the "move" is tick noise on a book quoted in half-cent increments.
+    flatLineThresholdPoints: 0.5,
+    imminentHours: 6,
+    earlyHours: 24 * 7,
   },
 };
 
