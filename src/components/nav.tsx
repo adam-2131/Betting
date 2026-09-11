@@ -6,6 +6,8 @@ import { cn } from "@/components/ui/primitives";
 
 const LINKS = [
   { href: "/", label: "OPPORTUNITIES" },
+  { href: "/cash-soon", label: "CASH SOON" },
+  { href: "/sports", label: "SPORTS" },
   { href: "/plan", label: "PLAN" },
   { href: "/smart-money", label: "SMART MONEY" },
   { href: "/traders", label: "TRADERS" },
