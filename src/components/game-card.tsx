@@ -16,6 +16,7 @@ import {
   safeNumber,
   UNAVAILABLE,
 } from "@/lib/num";
+import { describeBet, stakeOutcome } from "@/lib/bet-instruction";
 import type { GameGroup, ShortTermRow, StoredSportsAngle } from "@/lib/queries/short-term";
 import type { GamePhase, LineVerdict } from "@/lib/scoring/sports";
 import { Badge, Card, cn, type Tone } from "@/components/ui/primitives";
@@ -48,14 +49,25 @@ function SideRow({ row, angle }: { row: ShortTermRow; angle: StoredSportsAngle |
   const returnPerDay = safeNumber(row.returnPerDay);
   const effectivePrice = safeNumber(row.effectivePrice);
   const netEdge = safeNumber(row.netEdgePoints);
+  const winProbability = safeNumber(row.modelEstimateMid);
   const verdict = angle ? VERDICT_META[angle.lineVerdict] : null;
+
+  const instruction = describeBet({
+    question: row.market.question,
+    outcomeLabel: outcome,
+    outcomes: row.market.outcomes,
+    outcomeIndex: row.outcomeIndex,
+    sportsMarketType: row.market.sportsMarketType,
+  });
+  const unit = stakeOutcome(1, effectivePrice);
 
   return (
     <div className="py-2.5">
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-xs font-medium text-fg">{outcome}</span>
+            {/* The instruction, not the bare outcome label — "No" on its own says nothing. */}
+            <span className="text-xs font-medium text-fg">{instruction.action}</span>
             {angle ? (
               <Badge tone="neutral" size="sm">
                 {angle.kind.label}
@@ -67,10 +79,24 @@ function SideRow({ row, angle }: { row: ShortTermRow; angle: StoredSportsAngle |
               </Badge>
             ) : null}
           </div>
-          <p className="mt-0.5 truncate text-2xs text-dim">{row.market.question}</p>
+          <p className="mt-0.5 text-2xs leading-4 text-muted">
+            <span className="text-positive">Wins if</span> {instruction.winsIf}
+          </p>
         </div>
 
         <div className="flex shrink-0 items-baseline gap-4 text-2xs">
+          <span className="text-dim">
+            $1 pays{" "}
+            <span className="font-mono tabular-nums text-positive">
+              {unit === null ? UNAVAILABLE : `+${formatUsd(unit.profit)}`}
+            </span>
+          </span>
+          <span className="text-dim">
+            chance{" "}
+            <span className="font-mono tabular-nums text-fg">
+              {winProbability === null ? UNAVAILABLE : formatPercent(winProbability, 0)}
+            </span>
+          </span>
           <span className="text-dim">
             pay{" "}
             <span className="font-mono tabular-nums text-fg">{formatCents(effectivePrice)}</span>

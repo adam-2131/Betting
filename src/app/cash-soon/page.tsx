@@ -10,7 +10,14 @@
  * answer to "what should I put money into now".
  */
 import Link from "next/link";
-import { listCashSoon, readHorizon, getShortTermStats } from "@/lib/queries/short-term";
+import {
+  CASH_SOON_SORTS,
+  getShortTermStats,
+  listCashSoon,
+  readHorizon,
+  readSports,
+  type CashSoonSort,
+} from "@/lib/queries/short-term";
 import { getSettings } from "@/lib/settings";
 import { formatPercent, intPlain } from "@/lib/num";
 import { Card, EmptyState, SectionTitle, Stat } from "@/components/ui/primitives";
@@ -26,10 +33,15 @@ import { CashSoonFilterBar } from "./filters";
 
 export const dynamic = "force-dynamic";
 
+/** Query strings are user-editable, so anything unrecognised falls back to the default ordering. */
+function parseCashSoonSort(value: string | undefined): CashSoonSort {
+  return CASH_SOON_SORTS.some((s) => s.value === value) ? (value as CashSoonSort) : "perDay";
+}
+
 export default async function CashSoonPage({
   searchParams,
 }: {
-  searchParams: Promise<{ category?: string; window?: string; all?: string }>;
+  searchParams: Promise<{ category?: string; window?: string; all?: string; sort?: string }>;
 }) {
   const query = await searchParams;
   const categories = parseCategories(query.category);
@@ -37,6 +49,7 @@ export default async function CashSoonPage({
   const withinHours = settlementHours(windowValue);
   // Opt-in view of the rows whose edge the spread already ate, so the filter stays inspectable.
   const showNegativeEdge = query.all === "1";
+  const sort = parseCashSoonSort(query.sort);
 
   const [settings, stats, result] = await Promise.all([
     getSettings(),
@@ -45,6 +58,7 @@ export default async function CashSoonPage({
       withinHours,
       categories: categories.length > 0 ? categories : undefined,
       requirePositiveEdge: !showNegativeEdge,
+      sort,
       limit: 40,
     }),
   ]);
@@ -101,7 +115,9 @@ export default async function CashSoonPage({
       </section>
 
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <SectionTitle>Ranked by return per day</SectionTitle>
+        <SectionTitle>
+          {CASH_SOON_SORTS.find((s) => s.value === sort)?.label ?? "Ranked"}
+        </SectionTitle>
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs text-dim">
           <span>{result.rows.length} shown</span>
           <span>·</span>
@@ -109,6 +125,33 @@ export default async function CashSoonPage({
           <span>·</span>
           <AutoRefresh intervalSeconds={60} />
         </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded border border-line bg-panel/40 p-3">
+        <span className="text-2xs uppercase tracking-caps text-dim">Order by</span>
+        {CASH_SOON_SORTS.map((option) => (
+          <Link
+            key={option.value}
+            href={{
+              query: {
+                ...query,
+                sort: option.value === "perDay" ? undefined : option.value,
+              },
+            }}
+            title={option.hint}
+            aria-current={sort === option.value ? "true" : undefined}
+            className={
+              sort === option.value
+                ? "rounded border border-accent/50 bg-accent/10 px-2 py-0.5 text-2xs text-accent"
+                : "rounded border border-line px-2 py-0.5 text-2xs text-muted transition-colors hover:border-accent/30 hover:text-fg"
+            }
+          >
+            {option.label}
+          </Link>
+        ))}
+        <span className="text-2xs text-dim">
+          {CASH_SOON_SORTS.find((s) => s.value === sort)?.hint}
+        </span>
       </div>
 
       <CashSoonFilterBar
@@ -158,6 +201,7 @@ export default async function CashSoonPage({
               key={row.id}
               row={row}
               horizon={readHorizon(row)}
+              sports={readSports(row)}
               rank={index + 1}
               bankroll={settings.bankroll}
             />

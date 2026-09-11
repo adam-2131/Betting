@@ -96,6 +96,29 @@ export function readSports(row: ShortTermRow): StoredSportsAngle | null {
 // Cash Soon
 // ---------------------------------------------------------------------------
 
+/**
+ * How to order the board.
+ *
+ * Return per day is the ranking the score is built around, but it is the right question only for
+ * someone reinvesting continuously. Betting a flat dollar at a time is a different problem: the
+ * denominator never changes, so how often a bet lands and what it pays when it does matter more
+ * than how fast the capital recycles. Sorting on the underlying figure rather than re-scoring
+ * keeps each ordering honest about what it is sorting on.
+ */
+export type CashSoonSort =
+  /** Expected return per day of capital tied up. */
+  | "perDay"
+  /** The model's estimated chance of the position paying at all. */
+  | "chance"
+  /** Largest profit on a fixed stake, which is simply the cheapest entry. */
+  | "profit";
+
+export const CASH_SOON_SORTS: Array<{ value: CashSoonSort; label: string; hint: string }> = [
+  { value: "perDay", label: "Return per day", hint: "Best use of capital over time" },
+  { value: "chance", label: "Most likely to hit", hint: "Highest estimated chance of paying" },
+  { value: "profit", label: "Biggest payout", hint: "Most profit per $1 staked, and least likely" },
+];
+
 export interface CashSoonFilters {
   /** Only positions whose capital comes back inside this many hours. */
   withinHours?: number;
@@ -106,6 +129,7 @@ export interface CashSoonFilters {
    * should I put money into" should not lead with trades that lose to execution.
    */
   requirePositiveEdge?: boolean;
+  sort?: CashSoonSort;
   limit?: number;
 }
 
@@ -125,6 +149,7 @@ export async function listCashSoon(filters: CashSoonFilters = {}): Promise<CashS
     categories,
     minHorizonScore,
     requirePositiveEdge = true,
+    sort = "perDay",
     limit = 50,
   } = filters;
 
@@ -136,11 +161,21 @@ export async function listCashSoon(filters: CashSoonFilters = {}): Promise<CashS
   };
   if (categories?.length) where.market = { category: { in: categories } };
 
+  // Nulls always sort last, so rows that could not be scored never displace ones that could.
+  const orderBy: Prisma.OpportunityOrderByWithRelationInput[] =
+    sort === "chance"
+      ? // modelEstimateMid IS the estimated chance of being paid.
+        [{ modelEstimateMid: { sort: "desc", nulls: "last" } }]
+      : sort === "profit"
+        ? // A fixed stake profits most where the entry is cheapest, which is also where it wins
+          // least often. Ascending price is exactly that ordering.
+          [{ effectivePrice: { sort: "asc", nulls: "last" } }]
+        : [{ horizonScore: { sort: "desc", nulls: "last" } }];
+
   const rows = await prisma.opportunity.findMany({
     where,
     include: shortTermInclude,
-    // Nulls sort last, so rows that could not be scored never displace ones that could.
-    orderBy: [{ horizonScore: { sort: "desc", nulls: "last" } }],
+    orderBy,
     take: 500,
   });
 
