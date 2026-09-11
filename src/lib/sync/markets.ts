@@ -282,7 +282,21 @@ export async function syncMarkets(options: { limit?: number } = {}): Promise<Mar
   }
 
   // --- Write only what moved.
+  //
+  // Creates are batched and updates are not, and the asymmetry is the whole point. Prisma has no
+  // batch upsert, so the original loop issued one statement per market. Against a local database
+  // that is invisible; against a hosted one every statement is a round trip to another continent,
+  // and a first sync of 15,000 markets ran at seven rows a second and was still going when the
+  // job was killed at forty minutes.
+  //
+  // Creates dominate exactly when it hurts most — the first run, where nothing exists yet — and
+  // they batch cleanly because none of them needs a prior row. Updates cannot batch, but by then
+  // `isUnchanged` has already filtered the list down to markets that genuinely moved, which is a
+  // small fraction of a routine pass.
   const snapshotQueue: Prisma.MarketSnapshotCreateManyInput[] = [];
+  const toCreate: Prisma.MarketCreateManyInput[] = [];
+  /** Markets wanting a snapshot whose row id is not known until after the batch insert. */
+  const snapshotAfterCreate: NormalizedMarket[] = [];
 
   for (const market of deduped) {
     const existing = existingByConditionId.get(market.conditionId) ?? null;
@@ -296,18 +310,25 @@ export async function syncMarkets(options: { limit?: number } = {}): Promise<Mar
     const data = marketData(market);
     const newlyResolved = market.resolved && !(existing?.resolved ?? false);
 
-    const row = existing
-      ? await prisma.market.update({
-          where: { id: existing.id },
-          data: {
-            ...data,
-            // Only set resolvedAt on the transition, so it records when we first saw resolution.
-            resolvedAt: newlyResolved ? resolutionTimestamp(market.endDate) : existing.resolvedAt,
-          },
-        })
-      : await prisma.market.create({
-          data: { ...data, resolvedAt: market.resolved ? resolutionTimestamp(market.endDate) : null },
-        });
+    if (!existing) {
+      toCreate.push({
+        ...data,
+        resolvedAt: market.resolved ? resolutionTimestamp(market.endDate) : null,
+      });
+      if (wantsSnapshot) snapshotAfterCreate.push(market);
+      stats.marketsUpserted++;
+      if (newlyResolved) stats.resolvedDetected++;
+      continue;
+    }
+
+    const row = await prisma.market.update({
+      where: { id: existing.id },
+      data: {
+        ...data,
+        // Only set resolvedAt on the transition, so it records when we first saw resolution.
+        resolvedAt: newlyResolved ? resolutionTimestamp(market.endDate) : existing.resolvedAt,
+      },
+    });
 
     // Keep the pre-loaded map truthful, so nothing downstream in this pass can decide to create a
     // row that now exists.
@@ -325,6 +346,40 @@ export async function syncMarkets(options: { limit?: number } = {}): Promise<Mar
         liquidity: market.liquidity,
         volume24hr: market.volume24hr,
       });
+    }
+  }
+
+  // `createMany` returns a count rather than rows, so the ids come from one read afterwards —
+  // still two statements per chunk instead of one per market. `skipDuplicates` covers the race
+  // where a concurrent pass inserted the same condition id first.
+  if (toCreate.length > 0) {
+    for (let i = 0; i < toCreate.length; i += LOAD_CHUNK) {
+      await prisma.market.createMany({
+        data: toCreate.slice(i, i + LOAD_CHUNK),
+        skipDuplicates: true,
+      });
+    }
+
+    const createdIds = snapshotAfterCreate.map((m) => m.conditionId);
+    for (let i = 0; i < createdIds.length; i += LOAD_CHUNK) {
+      const rows = await prisma.market.findMany({
+        where: { conditionId: { in: createdIds.slice(i, i + LOAD_CHUNK) } },
+        select: { id: true, conditionId: true },
+      });
+      const idByCondition = new Map(rows.map((r) => [r.conditionId, r.id]));
+      for (const market of snapshotAfterCreate.slice(i, i + LOAD_CHUNK)) {
+        const id = idByCondition.get(market.conditionId);
+        if (!id) continue;
+        snapshotQueue.push({
+          marketId: id,
+          prices: market.prices,
+          bestBid: market.bestBid,
+          bestAsk: market.bestAsk,
+          spread: market.spread,
+          liquidity: market.liquidity,
+          volume24hr: market.volume24hr,
+        });
+      }
     }
   }
 
