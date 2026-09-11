@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SCORING_CONFIG } from "./config";
-import { computeHorizonScore, effectiveEntryPrice, type HorizonInput } from "./horizon";
+import {
+  computeHorizonScore,
+  effectiveEntryPrice,
+  quotesForOutcome,
+  type HorizonInput,
+} from "./horizon";
 
 const NOW = new Date("2026-09-11T12:00:00Z");
 const SLIPPAGE = DEFAULT_SCORING_CONFIG.shortHorizon.slippageAllowance;
@@ -24,6 +29,43 @@ function input(overrides: Partial<HorizonInput> = {}): HorizonInput {
     ...overrides,
   };
 }
+
+describe("quotesForOutcome — Gamma's single quote pair belongs to outcome 0", () => {
+  // Bills vs. Texans moneyline, verbatim: outcomes ["Bills","Texans"], prices ["0.525","0.475"],
+  // bestBid 0.52, bestAsk 0.53. The midpoint of the quotes is exactly outcomePrices[0], which is
+  // what proves they describe outcome 0 and not the market as a whole.
+  const BEST_BID = 0.52;
+  const BEST_ASK = 0.53;
+
+  it("returns the quotes unchanged for outcome 0", () => {
+    expect(quotesForOutcome(0, BEST_BID, BEST_ASK)).toEqual({ bid: 0.52, ask: 0.53 });
+  });
+
+  it("complements the quotes for outcome 1 rather than reusing them", () => {
+    // Reusing them would have the ranking buying the Texans at the Bills' price.
+    const { bid, ask } = quotesForOutcome(1, BEST_BID, BEST_ASK);
+    expect(bid).toBeCloseTo(0.47, 10);
+    expect(ask).toBeCloseTo(0.48, 10);
+  });
+
+  it("preserves the spread across the complement", () => {
+    const zero = quotesForOutcome(0, BEST_BID, BEST_ASK);
+    const one = quotesForOutcome(1, BEST_BID, BEST_ASK);
+    const spreadZero = (zero.ask as number) - (zero.bid as number);
+    const spreadOne = (one.ask as number) - (one.bid as number);
+    expect(spreadOne).toBeCloseTo(spreadZero, 10);
+  });
+
+  it("refuses to complement a market with more than two outcomes", () => {
+    // Negative-risk events have many legs and one quote pair cannot describe them.
+    expect(quotesForOutcome(2, BEST_BID, BEST_ASK)).toEqual({ bid: null, ask: null });
+  });
+
+  it("propagates missing quotes as null rather than as a complement of nothing", () => {
+    expect(quotesForOutcome(1, null, null)).toEqual({ bid: null, ask: null });
+    expect(quotesForOutcome(1, 0.52, null)).toEqual({ bid: null, ask: 0.48 });
+  });
+});
 
 describe("effectiveEntryPrice — you buy at the ask, not the mid", () => {
   it("uses the quoted ask rather than the mid price", () => {

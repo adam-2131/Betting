@@ -109,6 +109,43 @@ export interface HorizonResult extends ScoreResult {
 }
 
 /**
+ * The bid and ask for ONE OUTCOME of a binary market.
+ *
+ * VERIFIED TRAP: Gamma reports a single `bestBid`/`bestAsk` pair per market, and they belong to
+ * outcome index 0 only. On the Bills/Texans moneyline — outcomes ["Bills","Texans"] priced
+ * ["0.525","0.475"] — Gamma returned bestBid 0.52 and bestAsk 0.53, whose midpoint is exactly
+ * 0.525, the price of outcome 0. Reading that ask as the cost of the Texans side would have the
+ * ranking buying the wrong team at the wrong price.
+ *
+ * The other side follows from the CTF identity rather than from another request: complementary
+ * shares always sum to $1, so selling one outcome at its bid is buying the other at 1 − bid.
+ *
+ *   ask(1) = 1 − bid(0)      bid(1) = 1 − ask(0)
+ *
+ * The spread is preserved, which is the arithmetic check that this is right:
+ * (1 − bid0) − (1 − ask0) = ask0 − bid0.
+ */
+export function quotesForOutcome(
+  outcomeIndex: number,
+  bestBid: number | null,
+  bestAsk: number | null,
+): { bid: number | null; ask: number | null } {
+  const bid = safeNumber(bestBid);
+  const ask = safeNumber(bestAsk);
+
+  if (outcomeIndex === 0) return { bid, ask };
+
+  // Anything beyond a two-outcome market cannot be complemented from one quote pair. Negative-risk
+  // events have many legs, and guessing there would be worse than reporting nothing.
+  if (outcomeIndex !== 1) return { bid: null, ask: null };
+
+  return {
+    bid: ask === null ? null : 1 - ask,
+    ask: bid === null ? null : 1 - bid,
+  };
+}
+
+/**
  * The price a buyer actually transacts at.
  *
  * Prefers the real quoted ask. Falls back to reconstructing it from the mid and half the spread,

@@ -16,6 +16,8 @@ import {
   type OpportunityMarketInput,
   type OpportunityResult,
 } from "@/lib/scoring/opportunity";
+import { computeHorizonScore, quotesForOutcome, type HorizonResult } from "@/lib/scoring/horizon";
+import { analyzeSportsAngle, type SportsAngle } from "@/lib/scoring/sports";
 import type { ScoringConfig } from "@/lib/scoring/config";
 import { recordConsensusEvents } from "./feed";
 
@@ -76,8 +78,13 @@ export async function syncOpportunities(): Promise<OpportunitySyncStats> {
       volume: true,
       volume24hr: true,
       spread: true,
+      bestBid: true,
+      bestAsk: true,
       clarityScore: true,
       clarityFlags: true,
+      gameStartTime: true,
+      sportsMarketType: true,
+      league: true,
     },
   });
 
@@ -294,10 +301,55 @@ export async function syncOpportunities(): Promise<OpportunitySyncStats> {
 
       const opportunity = computeOpportunityScore(marketInput, consensus, now, config);
 
+      // --- Sports angle. Returns a populated result with isGame:false for everything else, so
+      //     there is no branch here.
+      const sports = analyzeSportsAngle(
+        {
+          gameStartTime: market.gameStartTime,
+          league: market.league,
+          sportsMarketType: market.sportsMarketType,
+          liquidity: market.liquidity,
+          spread: market.spread,
+          currentPrice,
+          weightedEntryPrice: consensus.weightedEntryPrice,
+          increasingCount: consensus.increasingCount,
+          decreasingCount: consensus.decreasingCount,
+          entries: holders.map((h) => ({ usd: h.sizeUsd, at: h.openedAt })),
+          now,
+        },
+        config,
+      );
+
+      // --- Short-horizon ranking.
+      //
+      // The quote pair Gamma reports belongs to outcome 0, so the other side has to be
+      // complemented rather than reused — see `quotesForOutcome`.
+      const { ask } = quotesForOutcome(outcomeIndex, market.bestBid, market.bestAsk);
+
+      const horizon = computeHorizonScore(
+        {
+          currentPrice,
+          bestAsk: ask,
+          spread: market.spread,
+          liquidity: market.liquidity,
+          modelMid: opportunity.modelEstimate.mid,
+          modelLow: opportunity.modelEstimate.low,
+          endDate: market.endDate,
+          // A sports game settles after it finishes, not when the market closes.
+          settlesAt: sports.settlesAt,
+          settlementTiming: sports.isGame ? "SCHEDULED" : market.endDate ? "STATED" : "UNKNOWN",
+          clarityScore: market.clarityScore,
+          consensusScore: consensus.score,
+          qualifiedTraders: consensus.qualifiedTraderCount,
+          now,
+        },
+        config,
+      );
+
       const row = await prisma.opportunity.upsert({
         where: { marketId_outcomeIndex: { marketId: market.id, outcomeIndex } },
-        create: opportunityData(market.id, outcomeIndex, opportunity, consensus, marketInput),
-        update: opportunityData(market.id, outcomeIndex, opportunity, consensus, marketInput),
+        create: opportunityData(market.id, outcomeIndex, opportunity, consensus, marketInput, horizon, sports),
+        update: opportunityData(market.id, outcomeIndex, opportunity, consensus, marketInput, horizon, sports),
       });
       survivingOpportunityIds.push(row.id);
       stats.opportunitiesWritten++;
@@ -385,6 +437,8 @@ function opportunityData(
   opportunity: OpportunityResult,
   consensus: ConsensusResult,
   market: OpportunityMarketInput,
+  horizon: HorizonResult,
+  sports: SportsAngle,
 ) {
   return {
     marketId,
@@ -409,6 +463,20 @@ function opportunityData(
     riskLevel: opportunity.riskLevel,
     reasonsFor: opportunity.reasonsFor as unknown as object,
     reasonsAgainst: opportunity.reasonsAgainst as unknown as object,
+
+    horizonScore: horizon.score,
+    returnPerDay: horizon.returnPerDay,
+    effectivePrice: horizon.effectivePrice,
+    netEdgePoints: horizon.netEdgePoints,
+    edgeRetention: horizon.edgeRetention,
+    settlesAt: sports.settlesAt ?? market.endDate,
+    horizon: horizon as unknown as object,
+
+    // Only meaningful for sports; left null elsewhere so a filter on them means "is a game".
+    gamePhase: sports.isGame ? sports.phase : null,
+    lineVerdict: sports.isGame ? sports.lineVerdict : null,
+    lateMoneyShare: sports.lateMoneyShare,
+    sports: sports.isGame ? (sports as unknown as object) : undefined,
   };
 }
 

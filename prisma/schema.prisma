@@ -619,12 +619,45 @@ model Opportunity {
   /// [{ text }] rendered under "Why it could fail"
   reasonsAgainst Json?
 
+  // --- Short-horizon ranking. See lib/scoring/horizon.ts.
+  //
+  // Deliberately stored alongside the opportunity score rather than replacing it: the two answer
+  // different questions and routinely disagree, and both are worth showing.
+  /// 0-100. Ranks by return per day of capital rather than by signal quality.
+  horizonScore   Float?
+  /// Expected return per dollar staked, per day tied up. The headline short-horizon number.
+  returnPerDay   Float?
+  /// What a buyer actually pays: the ask for THIS outcome, plus a slippage allowance.
+  effectivePrice Float?
+  /// Model estimate minus the effective price, in probability points. Negative is common.
+  netEdgePoints  Float?
+  /// Fraction of the theoretical edge left after crossing the spread, 0..1.
+  edgeRetention  Float?
+  /// Best estimate of when capital comes back. For sports this is kickoff plus the game length,
+  /// which is later than endDate — on a game market endDate IS kickoff.
+  settlesAt      DateTime?
+  /// Full HorizonResult: components, penalties, verdict and the intermediate figures.
+  horizon        Json?
+
+  // --- Sports. Null on every non-sports market. See lib/scoring/sports.ts.
+  /// EARLY | APPROACHING | IMMINENT | IN_PLAY | ENDED | NOT_A_GAME
+  gamePhase      String?
+  /// STEAM | CONFIRMED | DOUBLING_DOWN | CAPITULATING | FLAT | UNKNOWN
+  lineVerdict    String?
+  /// Share of tracked money that arrived inside the late-money window, 0..1.
+  lateMoneyShare Float?
+  /// Full SportsAngle.
+  sports         Json?
+
   signals Signal[]
   market  Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
 
   @@unique([marketId, outcomeIndex])
   @@index([score])
   @@index([rank])
+  /// The Cash Soon board sorts on this and filters on the settlement window.
+  @@index([horizonScore])
+  @@index([settlesAt])
 }
 
 model Signal {
