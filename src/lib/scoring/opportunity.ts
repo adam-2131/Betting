@@ -396,6 +396,30 @@ export function computeOpportunityScore(
     });
   }
 
+  if (price !== null && price < cfg.longshotPrice) {
+    penalties.push({
+      key: "longshot",
+      label: "Longshot pricing",
+      points: -cfg.longshotPenalty,
+      detail: `At ${(price * 100).toFixed(1)}¢ the market considers this unlikely, and most positions at this price lose the entire stake. The payout is large because the outcome rarely arrives, not because the price is wrong.`,
+    });
+  }
+
+  // The model estimate is derived from the consensus, so this fires when the consensus sits at or
+  // below neutral — agreement that is weak, opposed, stale, or automated-looking. Stated in terms
+  // of the estimate rather than the consensus score because that is the number the card shows.
+  if (modelEstimate.edgePoints !== null && modelEstimate.edgePoints <= 0) {
+    penalties.push({
+      key: "no-edge",
+      label: "Model does not see this side as underpriced",
+      points: -cfg.noEdgePenalty,
+      detail:
+        modelEstimate.mid !== null && price !== null
+          ? `The estimate puts this at ${(modelEstimate.mid * 100).toFixed(1)}¢ against a price of ${(price * 100).toFixed(1)}¢, so the model sees no value in it at today's price even though tracked traders hold it.`
+          : "The model does not place this side above its current price.",
+    });
+  }
+
   if (consensus.qualifiedTraderCount < cfg.minQualifiedTraders) {
     // Zero is categorically different from "a few". With no qualified trader on this side there
     // is no smart-money signal at all, and the whole premise of the ranking is absent — good

@@ -158,6 +158,35 @@ export interface ScoringConfig {
      * strong liquidity alone must not float a market to the top of the list.
      */
     noQualifiedTraderPenalty: number;
+    /**
+     * Price below which the side is penalised as a longshot, and the penalty applied.
+     *
+     * Must agree with `risk.longshotPrice` and `horizon.longshotPrice` — all three describe the
+     * same thing, and a market that is a longshot on one board must be a longshot on the others.
+     *
+     * This existed in `horizon` but not here, and the omission was measurable. Price is not a
+     * component of this score, so nothing offset the fact that smart money takes its speculative
+     * positions on cheap outcomes: across 2,106 live rows the top 25 by score had a median price
+     * of 14.1¢ against 36.6¢ for the board as a whole, 52% of them under 15¢, and the
+     * score-to-price correlation was −0.209. The same measurement on the return-per-day ranking,
+     * which already carried this penalty, was −0.002.
+     */
+    longshotPrice: number;
+    longshotPenalty: number;
+    /**
+     * Applied when the model's own estimate does not place the side above its price.
+     *
+     * The score computed an edge and then ignored it when ranking. Four of the top eleven live
+     * rows were sides the model called fairly priced or overpriced — 3.7¢ against an estimate of
+     * 3.7¢, 2.1¢ against 2.0¢ — and they scored within a point of picks carrying seven points of
+     * genuine edge, because liquidity, spread and recency carried them there. That is the same
+     * failure `noQualifiedTraderPenalty` exists to prevent, in a different guise.
+     *
+     * Smaller than the equivalent 35 in `horizon`, because that ranking is *only* edge per day:
+     * no edge voids its premise entirely. Here the smart-money signal is still real evidence, so
+     * this sits between the entry-gap and liquidity penalties rather than at the top of the scale.
+     */
+    noEdgePenalty: number;
   };
 
   /**
@@ -390,6 +419,10 @@ export const DEFAULT_SCORING_CONFIG: ScoringConfig = {
     minQualifiedTraders: 2,
     insufficientSamplePenalty: 10,
     noQualifiedTraderPenalty: 30,
+    // Same figure as risk.longshotPrice and horizon.longshotPrice; see the interface comment.
+    longshotPrice: 0.15,
+    longshotPenalty: 12,
+    noEdgePenalty: 18,
   },
 
   eligibility: {

@@ -193,6 +193,85 @@ describe("computeOpportunityScore", () => {
     expect(["HIGH", "VERY HIGH"]).toContain(longshot.riskLevel);
     expect(solid.riskLevel).toBe("LOW");
   });
+
+  it("penalises a longshot price rather than only labelling it as risky", () => {
+    // The risk level used to be the ONLY consequence of a cheap price, and because price is not a
+    // component of this score nothing else pushed back. On live data that left the top 25 sitting
+    // at a median of 14.1¢ against 36.6¢ for the whole board.
+    const cheap = computeOpportunityScore(marketInput({ currentPrice: 0.08 }), strongConsensus(), NOW);
+    const fair = computeOpportunityScore(marketInput({ currentPrice: 0.4 }), strongConsensus(), NOW);
+
+    expect(cheap.penalties.map((p) => p.key)).toContain("longshot");
+    expect(fair.penalties.map((p) => p.key)).not.toContain("longshot");
+    expect(cheap.score).toBeLessThan(fair.score);
+  });
+
+  it("does not penalise a price just above the longshot threshold", () => {
+    const above = computeOpportunityScore(marketInput({ currentPrice: 0.16 }), strongConsensus(), NOW);
+    expect(above.penalties.map((p) => p.key)).not.toContain("longshot");
+  });
+
+  it("penalises a side its own model estimate does not place above the price", () => {
+    // Neutral-or-worse agreement means the estimate cannot move up, so there is no edge to rank.
+    // Liquidity and a tight spread must not carry such a side to the top of the list — the same
+    // reasoning behind the no-qualified-trader penalty.
+    // The holder must clear the qualified bar (smartScore >= 60) or the model declines to
+    // estimate at all; the opposition is what drives the consensus below neutral.
+    const weak = computeConsensus(
+      [holder({ smartScore: 61, categorySkill: 48, sizeUsd: 900, recentNetUsd: 0 })],
+      Array.from({ length: 6 }, () => holder({ smartScore: 92, sizeUsd: 120_000 })),
+      consensusContext,
+    );
+    const result = computeOpportunityScore(marketInput(), weak, NOW);
+
+    expect(result.modelEstimate.edgePoints).not.toBeNull();
+    expect(result.modelEstimate.edgePoints!).toBeLessThanOrEqual(0);
+    expect(result.penalties.map((p) => p.key)).toContain("no-edge");
+  });
+
+  it("leaves a side with real estimated edge unpenalised on that count", () => {
+    const result = computeOpportunityScore(marketInput({ currentPrice: 0.4 }), strongConsensus(), NOW);
+    expect(result.modelEstimate.edgePoints!).toBeGreaterThan(0);
+    expect(result.penalties.map((p) => p.key)).not.toContain("no-edge");
+  });
+
+  it("ranks a mid-priced side with edge above a cheap side without it", () => {
+    // The defect this fixes: four of the top eleven live rows were sides the model called fairly
+    // priced or overpriced, scoring within a point of picks carrying seven points of real edge.
+    const noEdgeConsensus = computeConsensus(
+      [holder({ smartScore: 61, sizeUsd: 800 })],
+      Array.from({ length: 6 }, () => holder({ smartScore: 92, sizeUsd: 120_000 })),
+      consensusContext,
+    );
+    const cheapNoEdge = computeOpportunityScore(
+      marketInput({ currentPrice: 0.03 }),
+      noEdgeConsensus,
+      NOW,
+    );
+    const midWithEdge = computeOpportunityScore(
+      marketInput({ currentPrice: 0.42 }),
+      strongConsensus(),
+      NOW,
+    );
+
+    expect(midWithEdge.score).toBeGreaterThan(cheapNoEdge.score);
+  });
+
+  it("keeps every score inside 0-100 once both new penalties stack", () => {
+    const awful = computeConsensus(
+      [holder({ smartScore: 40, categorySkill: 35, sizeUsd: 100, likelyBot: true })],
+      Array.from({ length: 8 }, () => holder({ smartScore: 95, sizeUsd: 200_000 })),
+      consensusContext,
+    );
+    const result = computeOpportunityScore(
+      marketInput({ currentPrice: 0.02, liquidity: 100, spread: 0.09, clarityScore: 10, hoursSinceLastActivity: 24 * 40 }),
+      awful,
+      NOW,
+    );
+    expect(result.score).toBeGreaterThanOrEqual(0);
+    expect(result.score).toBeLessThanOrEqual(100);
+    expect(Number.isFinite(result.score)).toBe(true);
+  });
 });
 
 describe("computeModelEstimate", () => {

@@ -110,6 +110,20 @@ record. An open position that is currently up is a position, not a result.
 makes very little doing it. Every trader profile breaks performance down by entry-price bucket for
 this reason, and the Smart Trader Score penalises a record made mostly of near-certainties.
 
+**A cheap outcome is not a cheap opportunity, and the ranking no longer pretends otherwise.** The
+counterpart to the point above: if farming 96¢ favourites is not skill, neither is buying 3¢
+longshots value. Price is not a component of the Opportunity Score, and for a while nothing
+offset the fact that smart money places its speculative bets on cheap outcomes — so the score
+inherited that bias from its inputs. Measured across 2,106 live rows, the top 25 had a median
+price of 14.1¢ against 36.6¢ for the board as a whole, 52% of them sat under 15¢, and four of the
+top eleven were sides the model itself called fairly priced or overpriced, scoring within a point
+of picks carrying seven points of real edge. Two penalties now apply, both of which the
+return-per-day ranking already had: one for a price under 15¢, and one for a side the model does
+not place above its own price. The same measurement afterwards puts the top 25 at a median of
+48.5¢ with 8% under 15¢, and the score-to-price correlation moved from −0.209 to +0.071. Cheap
+outcomes are still listed — they are real positions — they simply no longer arrive at the top for
+being cheap.
+
 **The entry price is most of the signal.** A great trader who bought at 30¢ tells you very little
 about buying the same outcome at 72¢ — that is a different trade with a different payoff. The
 `ENTRY GAP` on every opportunity is the difference between today's price and the tracked traders'
