@@ -16,6 +16,7 @@
     "sync:traders": "tsx scripts/sync.ts --only=traders",
     "sync:scores": "tsx scripts/sync.ts --only=scores",
     "auto": "tsx scripts/auto-sync.ts",
+    "alert:test": "tsx scripts/test-alert.ts",
     "backtest": "tsx scripts/backtest.ts",
     "db:local": "tsx scripts/db-local.ts",
     "db:push": "prisma db push",

@@ -10,6 +10,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { ETH_ADDRESS_PATTERN } from "@/lib/polymarket/normalize";
 import { SETTINGS_ID } from "@/lib/settings";
 import { isValidWallet, normalizeWallet } from "@/lib/polymarket/normalize";
 import { Category, TraderSource } from "@prisma/client";
@@ -29,6 +30,18 @@ const settingsSchema = z.object({
   maxSpreadCents: z.coerce.number().min(0).max(100),
   minAgreeingTraders: z.coerce.number().int().min(0).max(50),
   maxEntryGapCents: z.coerce.number().min(0).max(100),
+  /**
+   * Your own Polymarket wallet. An address, never a key — validated to the same pattern as any
+   * tracked wallet and lowercased, since the Data API keys off the lowercase form. Blank clears
+   * it and stops the import.
+   */
+  myWallet: z
+    .string()
+    .trim()
+    .transform((v) => v.toLowerCase())
+    .refine((v) => v === "" || ETH_ADDRESS_PATTERN.test(v), {
+      message: "That is not a wallet address. It should start 0x and be 42 characters.",
+    }),
 });
 
 export async function saveSettings(_prev: ActionResult | null, formData: FormData): Promise<ActionResult> {
@@ -41,6 +54,7 @@ export async function saveSettings(_prev: ActionResult | null, formData: FormDat
     maxSpreadCents: formData.get("maxSpreadCents"),
     minAgreeingTraders: formData.get("minAgreeingTraders"),
     maxEntryGapCents: formData.get("maxEntryGapCents"),
+    myWallet: formData.get("myWallet") ?? "",
   });
 
   if (!parsed.success) {
@@ -60,6 +74,7 @@ export async function saveSettings(_prev: ActionResult | null, formData: FormDat
       maxSpread: v.maxSpreadCents / 100,
       minAgreeingTraders: v.minAgreeingTraders,
       maxEntryGap: v.maxEntryGapCents / 100,
+      myWallet: v.myWallet === "" ? null : v.myWallet,
     },
     update: {
       bankroll: v.bankroll,
@@ -70,11 +85,13 @@ export async function saveSettings(_prev: ActionResult | null, formData: FormDat
       maxSpread: v.maxSpreadCents / 100,
       minAgreeingTraders: v.minAgreeingTraders,
       maxEntryGap: v.maxEntryGapCents / 100,
+      myWallet: v.myWallet === "" ? null : v.myWallet,
     },
   });
 
   revalidatePath("/");
   revalidatePath("/settings");
+  revalidatePath("/bets");
   return { ok: true, message: "Settings saved." };
 }
 
@@ -120,6 +137,7 @@ export async function addTrader(_prev: ActionResult | null, formData: FormData):
 
   revalidatePath("/traders");
   revalidatePath("/settings");
+  revalidatePath("/bets");
   return {
     ok: true,
     message: `Added ${parsed.data.displayName}. Run \`npm run sync\` to pull their history.`,
@@ -130,10 +148,12 @@ export async function setTraderActive(traderId: string, active: boolean): Promis
   await prisma.trader.update({ where: { id: traderId }, data: { active } });
   revalidatePath("/traders");
   revalidatePath("/settings");
+  revalidatePath("/bets");
 }
 
 export async function removeTrader(traderId: string): Promise<void> {
   await prisma.trader.delete({ where: { id: traderId } });
   revalidatePath("/traders");
   revalidatePath("/settings");
+  revalidatePath("/bets");
 }

@@ -52,6 +52,22 @@ export function SettingsForm({ settings }: { settings: AppSettings }) {
       <form action={formAction}>
         <div className="grid gap-x-6 sm:grid-cols-2">
           <Field
+            label="Your Polymarket wallet"
+            hint="Optional. Set it and your bets import themselves at their real fill prices, whether placed here or on your phone. This is a public address, not a key — it is read-only and cannot move anything. PolyAlpha never asks for a private key or seed phrase."
+          >
+            <input
+              name="myWallet"
+              type="text"
+              inputMode="text"
+              spellCheck={false}
+              autoComplete="off"
+              placeholder="0x…"
+              defaultValue={settings.myWallet ?? ""}
+              className={inputClass}
+            />
+          </Field>
+
+          <Field
             label="Bankroll"
             hint="Used to show what a stake would buy. PolyAlpha never recommends a stake size."
           >

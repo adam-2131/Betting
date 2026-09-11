@@ -15,6 +15,7 @@
 import { prisma } from "@/lib/db";
 import { fetchPriceHistory, priceAt } from "@/lib/polymarket/clob";
 import { clvPoints } from "@/lib/clv";
+import { importWalletBets, type WalletImportStats } from "@/lib/bets/import-wallet";
 import { safeNumber } from "@/lib/num";
 
 export interface BetSyncStats {
@@ -24,6 +25,8 @@ export interface BetSyncStats {
   /** Closed long enough ago that CLOB history no longer reaches back to it. */
   noHistory: number;
   failures: number;
+  /** Import of your own Polymarket account, when a wallet is configured. */
+  walletImport: WalletImportStats;
 }
 
 /**
@@ -33,7 +36,17 @@ export interface BetSyncStats {
 const SETTLE_DELAY_MS = 10 * 60_000;
 
 export async function syncBets(): Promise<BetSyncStats> {
-  const stats: BetSyncStats = { pending: 0, priced: 0, settled: 0, noHistory: 0, failures: 0 };
+  // Import first, so a bet placed since the last pass is priced in this one rather than the next.
+  const walletImport = await importWalletBets();
+
+  const stats: BetSyncStats = {
+    pending: 0,
+    priced: 0,
+    settled: 0,
+    noHistory: 0,
+    failures: 0,
+    walletImport,
+  };
   const cutoff = new Date(Date.now() - SETTLE_DELAY_MS);
 
   const pending = await prisma.betLog.findMany({
@@ -101,7 +114,10 @@ export async function syncBets(): Promise<BetSyncStats> {
  */
 async function settleResolvedBets(): Promise<number> {
   const unsettled = await prisma.betLog.findMany({
-    where: { resolved: false, market: { resolved: true } },
+    // MANUAL only. A wallet bet is settled from the exchange's own realised figure, which is the
+    // authoritative one and differs whenever a position was exited before the market resolved.
+    // Inferring from the winning outcome here would overwrite a correct number with a wrong one.
+    where: { resolved: false, source: "MANUAL", market: { resolved: true } },
     select: {
       id: true,
       outcomeIndex: true,

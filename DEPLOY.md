@@ -59,8 +59,12 @@ Edit `.env`:
 DATABASE_URL="postgresql://..."          # Neon/Supabase, or a local Postgres container
 CRON_SECRET="<a long random string>"     # protects /api/cron/sync
 ALERT_WEBHOOK_URL="https://ntfy.sh/..."  # see below
-PUBLIC_BASE_URL="http://<your-ip>:3000"  # so links in alerts work
+PUBLIC_BASE_URL="https://your-address"   # so links in alerts work
+APP_PASSWORD="<your password>"           # REQUIRED once this is reachable from anywhere
 ```
+
+Set `myWallet` on the Settings page afterwards and your bets import themselves at their real fill
+prices. It is a public address, read-only — nothing here ever asks for a key.
 
 Then:
 
@@ -110,20 +114,54 @@ The topic name *is* the password. Anyone who guesses it reads your alerts, so ma
 Leave it blank and alerts still get recorded and are readable at `/alerts` — they simply are not
 pushed.
 
-## Locking it down
+## Keeping it private
 
-The app has no login. On a public IP, anything that can reach port 3000 can read your bet history.
+Two layers, both free, and you want both.
 
-It holds no wallet, no key and no Polymarket credential, so the worst case is disclosure rather
-than theft — but it is still your betting record. Either bind it to localhost and reach it over an
-SSH tunnel:
+### 1. The password
 
 ```bash
-docker run -d -p 127.0.0.1:3000:3000 ...     # on the server
+APP_PASSWORD="something long that you will remember"
+```
+
+One user, one password. Set it before the app is reachable from anywhere you do not control.
+Leave it blank and the app is open, which is fine on your own machine and nowhere else.
+
+It protects your **betting record**, not your money — the app holds no wallet, no key and no
+Polymarket credential, so the worst case is someone reading what you bet.
+
+### 2. HTTPS, without a domain and without opening a port
+
+The password crosses the wire in the clear over plain HTTP, so it needs something in front of it.
+Both of these are free and neither needs a domain name.
+
+**Cloudflare Tunnel** — the better option. It gives you an HTTPS address, and the server makes an
+outbound connection, so **no inbound port is open at all**. Nothing to find by scanning.
+
+```bash
+# on the server, after `docker run`
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
+chmod +x cloudflared
+./cloudflared tunnel --url http://localhost:3000
+```
+
+It prints a `https://something.trycloudflare.com` address that works from your phone immediately.
+Free quick tunnels get a new address each restart; a free Cloudflare account and a named tunnel
+gives you a fixed one. Set `PUBLIC_BASE_URL` to whichever address you settle on so the links inside
+alerts work.
+
+**SSH tunnel** — nothing to install, but only reaches the machine you tunnel from, so not your
+phone.
+
+```bash
+docker run -d -p 127.0.0.1:3000:3000 ...     # bind to localhost only
 ssh -L 3000:localhost:3000 user@your-server  # from your laptop
 ```
 
-…or put Caddy in front of it with basic auth. The tunnel needs no extra software and no domain.
+### What the combination gives you
+
+Cloudflare Tunnel plus `APP_PASSWORD` is HTTPS, no open ports, reachable from your phone, and only
+by you. It costs nothing.
 
 ## Checking it works
 

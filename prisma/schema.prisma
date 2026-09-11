@@ -771,6 +771,16 @@ model AppSettings {
   smallBankrollMode Boolean @default(true)
   excludeBots       Boolean @default(true)
 
+  /// Your own Polymarket proxy wallet, lowercased.
+  ///
+  /// Read-only and public: every endpoint used to import your bets is the same one the app
+  /// already calls for the wallets on the watchlist. An address is not a credential — it cannot
+  /// place, sign or move anything, and nothing here ever asks for a key.
+  ///
+  /// Set it and your bets import themselves, at their real fill prices, whether they were placed
+  /// from this machine or your phone.
+  myWallet String?
+
   minTraderScore    Float @default(50)
   minConsensusScore Float @default(40)
   minLiquidity      Float @default(1000)
@@ -807,9 +817,22 @@ model BetLog {
   outcomeLabel String
   question     String @db.Text
 
-  /// Price per share actually paid, captured live at the moment of logging.
+  /// Price per share actually paid.
+  ///
+  /// For a WALLET bet this is the real on-chain fill price, which is strictly better than the
+  /// estimate a manual log can capture — no slippage allowance, no snapshot lag, just what the
+  /// trade executed at.
   entryPrice Float
   stake      Float  @default(1)
+
+  /// MANUAL — pressed "I bet this" on a card.
+  /// WALLET — imported from your own Polymarket account.
+  source String @default("MANUAL")
+  /// Fill identity for a WALLET bet, so re-importing can never duplicate one. Same composite the
+  /// activity log uses, because one transaction can contain several fills.
+  externalId String? @unique
+  /// CLOB token id, for matching against your settled positions.
+  asset      String?
 
   // --- What the board was claiming when the bet was taken. Snapshotted so the log can later be
   //     asked whether a high score corresponded to a good price, not just a good outcome.
