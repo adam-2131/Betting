@@ -20,6 +20,7 @@ import { describeBet, stakeOutcome } from "@/lib/bet-instruction";
 import type { GameGroup, ShortTermRow, StoredSportsAngle } from "@/lib/queries/short-term";
 import type { GamePhase, LineVerdict } from "@/lib/scoring/sports";
 import { Badge, Card, cn, type Tone } from "@/components/ui/primitives";
+import { LogBetButton } from "@/components/log-bet-button";
 import { ViewOnPolymarket } from "@/components/ui/view-on-polymarket";
 
 const PHASE_META: Record<GamePhase, { label: string; tone: Tone }> = {
@@ -126,6 +127,7 @@ function SideRow({ row, angle }: { row: ShortTermRow; angle: StoredSportsAngle |
           >
             detail
           </Link>
+          <LogBetButton opportunityId={row.id} />
         </div>
       </div>
 

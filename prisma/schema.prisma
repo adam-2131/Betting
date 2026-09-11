@@ -327,6 +327,7 @@ model Market {
   opportunities   Opportunity[]
   feedEvents      FeedEvent[]
   backtestSignals BacktestSignal[]
+  bets            BetLog[]
 
   @@index([closed, active])
   @@index([category])
@@ -781,6 +782,68 @@ model AppSettings {
   scoringOverrides Json?
 
   updatedAt DateTime @updatedAt
+}
+
+/// A bet the user actually placed, and how its price compared with the market's final one.
+///
+/// This is the only table in the product that records a human decision rather than an observation
+/// of Polymarket, and it exists because nothing else here can answer "is any of this working".
+/// Win rate cannot: at a dollar a bet it takes hundreds of settled positions to separate skill
+/// from variance, and the backtest already demonstrated how easily a flattering number survives
+/// until someone checks it properly.
+///
+/// Closing line value can, and much sooner. The price a market settles into just before it closes
+/// is the most accurate figure it ever produces, so beating it consistently means being ahead of
+/// the market and paying above it means being behind — regardless of how the individual bet
+/// landed. It is a continuous measurement taken per bet rather than a win or a loss, so a usable
+/// read arrives in tens of bets rather than hundreds.
+model BetLog {
+  id       String   @id @default(cuid())
+  placedAt DateTime @default(now())
+
+  marketId     String
+  outcomeIndex Int
+  /// Denormalised so the log still reads correctly if the market row is later refreshed.
+  outcomeLabel String
+  question     String @db.Text
+
+  /// Price per share actually paid, captured live at the moment of logging.
+  entryPrice Float
+  stake      Float  @default(1)
+
+  // --- What the board was claiming when the bet was taken. Snapshotted so the log can later be
+  //     asked whether a high score corresponded to a good price, not just a good outcome.
+  horizonScore     Float?
+  modelMid         Float?
+  netEdgePoints    Float?
+  qualifiedTraders Int?
+
+  /// When this market's price stops being informative — kickoff for a game, close otherwise.
+  closesAt DateTime?
+
+  // --- Filled in after the close by the `bets` sync stage.
+  /// Last observed price for this outcome at or before `closesAt`.
+  closingPrice   Float?
+  closingPriceAt DateTime?
+  /// closingPrice − entryPrice, in probability points. Positive means you bought below the
+  /// market's final assessment, which is the thing worth being good at.
+  clvPoints      Float?
+  /// How the closing price was obtained, so an estimate is never mistaken for an observation.
+  clvSource      String?
+
+  // --- Settlement, recorded for completeness. Deliberately NOT the headline.
+  resolved Boolean  @default(false)
+  won      Boolean?
+  /// Realised profit or loss on the stake.
+  pnl      Float?
+
+  note String? @db.Text
+
+  market Market @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  @@index([placedAt])
+  @@index([marketId])
+  @@index([closesAt])
 }
 
 model SyncRun {

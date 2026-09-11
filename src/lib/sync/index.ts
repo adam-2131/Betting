@@ -9,6 +9,7 @@
  *   POST /api/cron/sync     (guarded by CRON_SECRET)
  */
 import { prisma } from "@/lib/db";
+import { syncBets } from "./bets";
 import { pruneFeed } from "./feed";
 import { refreshStaleTrackedMarkets, syncMarkets } from "./markets";
 import { syncOpportunities } from "./opportunities";
@@ -25,7 +26,8 @@ export type SyncStage =
   | "relink"
   | "prices"
   | "scores"
-  | "opportunities";
+  | "opportunities"
+  | "bets";
 
 /**
  * `relink` sits after `traders` because it repairs rows the trader stage has just written, using
@@ -41,6 +43,9 @@ export const ALL_STAGES: SyncStage[] = [
   "relink",
   "scores",
   "opportunities",
+  // Last, and cheap: it only touches bets whose close has already passed. Included by default
+  // because a feedback loop nobody remembers to run is not a feedback loop.
+  "bets",
 ];
 
 /**
@@ -58,6 +63,7 @@ export const EVERY_STAGE: SyncStage[] = [
   "prices",
   "scores",
   "opportunities",
+  "bets",
 ];
 
 export interface StageResult {
@@ -164,6 +170,10 @@ export async function runSync(
 
       case "scores":
         results.push(await runStage("scores", () => syncScores()));
+        break;
+
+      case "bets":
+        results.push(await runStage("bets", () => syncBets()));
         break;
 
       case "opportunities":
