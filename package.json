@@ -28,7 +28,6 @@
     "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
-    "@embedded-postgres/windows-x64": "^18.4.0-beta.17",
     "@prisma/client": "^6.1.0",
     "clsx": "^2.1.1",
     "dotenv": "^17.4.2",
