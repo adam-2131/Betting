@@ -12,6 +12,16 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { describeClv, MIN_SAMPLE, summarizeClv } from "@/lib/clv";
+import {
+  describeRelation,
+  scoreVsClv,
+  sliceByCategory,
+  sliceByPrice,
+  sliceByScore,
+  SLICE_GATE,
+  type BetRecord,
+  type RecordSlice,
+} from "@/lib/bets/breakdown";
 import { formatCents, formatRelativeTime, formatSignedUsd, formatUsd, intPlain } from "@/lib/num";
 import {
   Badge,
@@ -46,12 +56,81 @@ const VERDICT_LABEL: Record<string, string> = {
   TOO_FEW: "TOO FEW MEASURED",
 };
 
+const RELATION_TONE: Record<string, Tone> = {
+  POSITIVE: "positive",
+  NEGATIVE: "negative",
+  NO_RELATION: "warning",
+  TOO_FEW: "neutral",
+};
+
+/**
+ * A descriptive slice. Shows counts always and an average only once the slice is big enough,
+ * because a caveat beside a number gets skimmed and a blank does not.
+ */
+function SliceCard({ title, slices }: { title: string; slices: RecordSlice[] }) {
+  const populated = slices.filter((s) => s.count > 0);
+  return (
+    <Card>
+      <SectionTitle>{title}</SectionTitle>
+      {populated.length === 0 ? (
+        <p className="mt-2 text-2xs text-dim">Nothing logged yet.</p>
+      ) : (
+        <ul className="mt-2 space-y-1.5">
+          {populated.map((slice) => (
+            <li key={slice.label} className="flex items-baseline justify-between gap-3 text-2xs">
+              <span className="min-w-0 truncate text-muted">{slice.label}</span>
+              <span className="flex shrink-0 items-baseline gap-3">
+                <span className="text-dim">
+                  {slice.count} bet{slice.count === 1 ? "" : "s"}
+                </span>
+                <span
+                  className={
+                    slice.meanClv === null
+                      ? "font-sans text-dim"
+                      : slice.meanClv >= 0
+                        ? "font-mono tabular-nums text-positive"
+                        : "font-mono tabular-nums text-negative"
+                  }
+                >
+                  {slice.meanClv === null
+                    ? `${slice.measured}/${SLICE_GATE}`
+                    : `${slice.meanClv >= 0 ? "+" : ""}${slice.meanClv.toFixed(1)}`}
+                </span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="mt-2 border-t border-line pt-2 text-2xs leading-4 text-dim">
+        Average CLV appears once a slice has {SLICE_GATE} measured bets. Until then the fraction
+        shows how far off that is.
+      </p>
+    </Card>
+  );
+}
+
 export default async function BetsPage() {
   const bets = await prisma.betLog.findMany({
     orderBy: { placedAt: "desc" },
     take: 200,
-    include: { market: { select: { slug: true, eventSlug: true, gameStartTime: true } } },
+    include: {
+      market: {
+        select: { slug: true, eventSlug: true, gameStartTime: true, category: true },
+      },
+    },
   });
+
+  const records: BetRecord[] = bets.map((bet) => ({
+    entryPrice: bet.entryPrice,
+    clvPoints: bet.clvPoints,
+    horizonScore: bet.horizonScore,
+    category: bet.market.category,
+    won: bet.won,
+    pnl: bet.pnl,
+    stake: bet.stake,
+  }));
+
+  const relation = scoreVsClv(records);
 
   const measured = bets.filter((b) => b.clvPoints !== null);
   const summary = summarizeClv(
@@ -142,6 +221,33 @@ export default async function BetsPage() {
         </div>
         <p className="mt-2 text-xs leading-5 text-muted">{describeClv(summary)}</p>
       </Card>
+
+      {records.length > 0 ? (
+        <Card>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <SectionTitle>Does the score correspond to the prices you get?</SectionTitle>
+            <Badge tone={RELATION_TONE[relation.verdict] ?? "neutral"} size="sm">
+              {relation.verdict.replace(/_/g, " ")}
+            </Badge>
+          </div>
+          <p className="mt-2 text-xs leading-5 text-muted">{describeRelation(relation)}</p>
+          <p className="mt-2 border-t border-line pt-2 text-2xs leading-4 text-dim">
+            This is the only inferential test on the page, and it was chosen before any bets
+            existed. Searching your record for whichever category or price band happens to look
+            best is how the backtest in this repo once reported a +12.8pp edge that turned out to
+            be the search rather than the data — with thousands of signals. The slices below are
+            there to show you what you have been doing, not to pick your next bet.
+          </p>
+        </Card>
+      ) : null}
+
+      {records.length > 0 ? (
+        <div className="grid gap-4 lg:grid-cols-3">
+          <SliceCard title="By price paid" slices={sliceByPrice(records)} />
+          <SliceCard title="By board score" slices={sliceByScore(records)} />
+          <SliceCard title="By category" slices={sliceByCategory(records)} />
+        </div>
+      ) : null}
 
       {bets.length === 0 ? (
         <EmptyState

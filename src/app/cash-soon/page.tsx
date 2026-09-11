@@ -14,6 +14,8 @@ import {
   CASH_SOON_SORTS,
   getShortTermStats,
   listCashSoon,
+  listLoggedPositions,
+  loggedKey,
   readHorizon,
   readSports,
   type CashSoonSort,
@@ -51,9 +53,10 @@ export default async function CashSoonPage({
   const showNegativeEdge = query.all === "1";
   const sort = parseCashSoonSort(query.sort);
 
-  const [settings, stats, result] = await Promise.all([
+  const [settings, stats, logged, result] = await Promise.all([
     getSettings(),
     getShortTermStats(),
+    listLoggedPositions(),
     listCashSoon({
       withinHours,
       categories: categories.length > 0 ? categories : undefined,
@@ -204,6 +207,7 @@ export default async function CashSoonPage({
               sports={readSports(row)}
               rank={index + 1}
               bankroll={settings.bankroll}
+              logged={logged.get(loggedKey(row)) ?? null}
             />
           ))}
         </div>

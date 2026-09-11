@@ -15,7 +15,12 @@
  * Both exclusions are counted and shown rather than applied silently.
  */
 import Link from "next/link";
-import { getShortTermStats, listSportsGames, readSports } from "@/lib/queries/short-term";
+import {
+  getShortTermStats,
+  listLoggedPositions,
+  listSportsGames,
+  readSports,
+} from "@/lib/queries/short-term";
 import { intPlain } from "@/lib/num";
 import { Card, EmptyState, SectionTitle, Stat } from "@/components/ui/primitives";
 import { GameCard } from "@/components/game-card";
@@ -35,8 +40,9 @@ export default async function SportsPage({
   const includeUntradeable = query.props === "1";
   const includeInPlay = query.live === "1";
 
-  const [stats, result] = await Promise.all([
+  const [stats, logged, result] = await Promise.all([
     getShortTermStats(),
+    listLoggedPositions(),
     listSportsGames({
       withinHours: sportsHours(windowValue),
       tradeableOnly: !includeUntradeable,
@@ -136,7 +142,12 @@ export default async function SportsPage({
       ) : (
         <div className="space-y-3">
           {result.games.map((game) => (
-            <GameCard key={game.eventId ?? game.title} game={game} readAngle={readSports} />
+            <GameCard
+              key={game.eventId ?? game.title}
+              game={game}
+              readAngle={readSports}
+              logged={logged}
+            />
           ))}
         </div>
       )}

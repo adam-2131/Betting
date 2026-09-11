@@ -17,10 +17,13 @@ import { cn } from "@/components/ui/primitives";
 export function LogBetButton({
   opportunityId,
   stake = 1,
+  /** What is already logged on this side, so the state survives a reload. */
+  existing,
   className,
 }: {
   opportunityId: string;
   stake?: number;
+  existing?: { count: number; totalStake: number; averagePrice: number } | null;
   className?: string;
 }) {
   const [result, setResult] = useState<LogBetResult | null>(null);
@@ -32,16 +35,30 @@ export function LogBetButton({
     });
   };
 
-  if (result?.ok) {
+  // Prefer the fresh result, fall back to what the server knew at render time. Without the
+  // fallback the button forgets everything on reload, which is how you end up betting the same
+  // side twice without noticing.
+  const logged = result?.ok
+    ? { count: (existing?.count ?? 0) + 1, price: result.entryPrice }
+    : existing
+      ? { count: existing.count, price: existing.averagePrice }
+      : null;
+
+  if (logged) {
     return (
       <span
         className={cn(
           "inline-flex items-center gap-1.5 rounded border border-positive/40 bg-positive/10 px-2.5 py-1 text-2xs uppercase tracking-caps text-positive",
           className,
         )}
-        title={result.message}
+        title={
+          result?.ok
+            ? result.message
+            : `You have logged this side ${logged.count} time${logged.count === 1 ? "" : "s"}.`
+        }
       >
-        Logged at {(result.entryPrice * 100).toFixed(1)}¢
+        {logged.count > 1 ? `Bet ${logged.count}x at ` : "Bet at "}
+        {(logged.price * 100).toFixed(1)}¢
       </span>
     );
   }

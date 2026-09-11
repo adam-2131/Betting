@@ -17,7 +17,12 @@ import {
   UNAVAILABLE,
 } from "@/lib/num";
 import { describeBet, stakeOutcome } from "@/lib/bet-instruction";
-import type { GameGroup, ShortTermRow, StoredSportsAngle } from "@/lib/queries/short-term";
+import type {
+  GameGroup,
+  LoggedPosition,
+  ShortTermRow,
+  StoredSportsAngle,
+} from "@/lib/queries/short-term";
 import type { GamePhase, LineVerdict } from "@/lib/scoring/sports";
 import { Badge, Card, cn, type Tone } from "@/components/ui/primitives";
 import { LogBetButton } from "@/components/log-bet-button";
@@ -45,7 +50,15 @@ const VERDICT_META: Record<LineVerdict, { label: string; tone: Tone } | null> = 
   UNKNOWN: null,
 };
 
-function SideRow({ row, angle }: { row: ShortTermRow; angle: StoredSportsAngle | null }) {
+function SideRow({
+  row,
+  angle,
+  logged,
+}: {
+  row: ShortTermRow;
+  angle: StoredSportsAngle | null;
+  logged?: LoggedPosition | null;
+}) {
   const outcome = row.market.outcomes[row.outcomeIndex] ?? `Outcome ${row.outcomeIndex}`;
   const returnPerDay = safeNumber(row.returnPerDay);
   const effectivePrice = safeNumber(row.effectivePrice);
@@ -127,7 +140,7 @@ function SideRow({ row, angle }: { row: ShortTermRow; angle: StoredSportsAngle |
           >
             detail
           </Link>
-          <LogBetButton opportunityId={row.id} />
+          <LogBetButton opportunityId={row.id} existing={logged} />
         </div>
       </div>
 
@@ -148,9 +161,10 @@ function SideRow({ row, angle }: { row: ShortTermRow; angle: StoredSportsAngle |
   );
 }
 
-export function GameCard({ game, readAngle }: {
+export function GameCard({ game, readAngle, logged }: {
   game: GameGroup;
   readAngle: (row: ShortTermRow) => StoredSportsAngle | null;
+  logged?: Map<string, LoggedPosition>;
 }) {
   const phase = PHASE_META[game.phase] ?? PHASE_META.NOT_A_GAME;
   const first = game.rows[0];
@@ -191,7 +205,12 @@ export function GameCard({ game, readAngle }: {
 
       <div className="divide-y divide-line border-t border-line">
         {game.rows.map((row) => (
-          <SideRow key={row.id} row={row} angle={readAngle(row)} />
+          <SideRow
+            key={row.id}
+            row={row}
+            angle={readAngle(row)}
+            logged={logged?.get(`${row.marketId}:${row.outcomeIndex}`) ?? null}
+          />
         ))}
       </div>
 

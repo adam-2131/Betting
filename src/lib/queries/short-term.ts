@@ -325,6 +325,60 @@ export async function listSportsGames(filters: SportsFilters = {}): Promise<Spor
   };
 }
 
+/** What you have already logged on a market side, keyed `marketId:outcomeIndex`. */
+export interface LoggedPosition {
+  count: number;
+  totalStake: number;
+  /** Volume-weighted average of what you paid, so repeat bets read as one position. */
+  averagePrice: number;
+}
+
+/**
+ * Bets already logged, so a card can say so.
+ *
+ * `BetLog` stores a market and an outcome index rather than an opportunity id, and `Opportunity`
+ * is unique on that same pair — so they join on it without a foreign key. That is deliberate: an
+ * opportunity row is deleted and recreated whenever it stops and starts qualifying, and a bet must
+ * outlive that. It is a record of something you did, not of a row that happened to exist.
+ */
+export async function listLoggedPositions(): Promise<Map<string, LoggedPosition>> {
+  const bets = await prisma.betLog.findMany({
+    select: { marketId: true, outcomeIndex: true, stake: true, entryPrice: true },
+  });
+
+  const byKey = new Map<string, LoggedPosition & { notional: number }>();
+  for (const bet of bets) {
+    const key = `${bet.marketId}:${bet.outcomeIndex}`;
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.count++;
+      existing.totalStake += bet.stake;
+      existing.notional += bet.stake * bet.entryPrice;
+    } else {
+      byKey.set(key, {
+        count: 1,
+        totalStake: bet.stake,
+        notional: bet.stake * bet.entryPrice,
+        averagePrice: bet.entryPrice,
+      });
+    }
+  }
+
+  const result = new Map<string, LoggedPosition>();
+  for (const [key, value] of byKey) {
+    result.set(key, {
+      count: value.count,
+      totalStake: value.totalStake,
+      averagePrice: value.totalStake > 0 ? value.notional / value.totalStake : value.averagePrice,
+    });
+  }
+  return result;
+}
+
+export function loggedKey(row: ShortTermRow): string {
+  return `${row.marketId}:${row.outcomeIndex}`;
+}
+
 export interface ShortTermStats {
   /** Sides settling within 24 hours. */
   settlingToday: number;

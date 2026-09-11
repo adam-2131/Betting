@@ -24,7 +24,12 @@ import {
   UNAVAILABLE,
 } from "@/lib/num";
 import { describeBet, stakeOutcome } from "@/lib/bet-instruction";
-import type { ShortTermRow, StoredHorizon, StoredSportsAngle } from "@/lib/queries/short-term";
+import type {
+  LoggedPosition,
+  ShortTermRow,
+  StoredHorizon,
+  StoredSportsAngle,
+} from "@/lib/queries/short-term";
 import { Badge, Card, cn, type Tone } from "@/components/ui/primitives";
 import { LogBetButton } from "@/components/log-bet-button";
 import { ViewOnPolymarket } from "@/components/ui/view-on-polymarket";
@@ -59,12 +64,14 @@ export function CashSoonCard({
   sports,
   rank,
   bankroll,
+  logged,
 }: {
   row: ShortTermRow;
   horizon: StoredHorizon | null;
   sports: StoredSportsAngle | null;
   rank: number;
   bankroll: number;
+  logged?: LoggedPosition | null;
 }) {
   const outcome = row.market.outcomes[row.outcomeIndex] ?? `Outcome ${row.outcomeIndex}`;
   const effectivePrice = safeNumber(row.effectivePrice);
@@ -291,7 +298,7 @@ export function CashSoonCard({
         </div>
 
         <div className="flex items-center gap-2">
-          <LogBetButton opportunityId={row.id} stake={UNIT_STAKE} />
+          <LogBetButton opportunityId={row.id} stake={UNIT_STAKE} existing={logged} />
           <Link
             href={`/opportunities/${row.id}`}
             className="rounded border border-line px-2.5 py-1 text-2xs uppercase tracking-caps text-muted hover:border-accent/40 hover:text-accent"
